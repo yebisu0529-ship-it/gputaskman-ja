@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .i18n import _
+
 _MAX_SETTINGS_BYTES = 256 << 10
 _MAX_LOG_BYTES = 512 << 10
 _settings_cache: dict[str, tuple[tuple[int, int], str | None]] = {}
@@ -99,14 +101,14 @@ def _last_model_event(path: str, process_started: float) -> tuple[str, str, str]
         model_match = _MODEL_EVENT.search(line)
         if model_match:
             if "Loaded whisper model " in line:
-                event = "loaded"
+                event = _("loaded")
             elif "Live streaming transcription started " in line:
-                event = "streaming started"
+                event = _("streaming started")
             else:
-                event = "preview"
+                event = _("preview")
             latest = (event, model_match[1], occurred.isoformat())
         elif _UNLOAD_EVENT.search(line):
-            event = "unloaded" if "unloaded" in line.lower() else "unloading"
+            event = _("unloaded") if "unloaded" in line.lower() else _("unloading")
             model = latest[1] if latest else ""
             latest = (event, model, occurred.isoformat())
     _log_cache[key] = (signature, latest)

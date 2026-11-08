@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from .dxgi import VENDORS, Adapter
+from .i18n import _
 from .linux import pci_key
 from .telemetry import DeviceTelemetry
 from .pdh import AdapterGpu, ProcGpu
@@ -500,7 +501,7 @@ class DrmCounters:
             with os.scandir(self._proc) as entries:
                 pids = sorted(int(e.name) for e in entries if e.name.isdigit())
         except OSError:
-            self.status = f"{self._proc} is not readable"
+            self.status = _("{proc} is not readable").format(proc=self._proc)
             return clients, kfd, incomplete
         start = bisect_left(pids, self._cursor)
         ordered = pids[start:] + pids[:start]
@@ -564,12 +565,14 @@ class DrmCounters:
             self._cursor = cursor  # else only new processes were deferred: the known ones keep their place
         notes = []
         if out_of_time:
-            notes.append(f"scan budget reached, {deferred} processes not rescanned this refresh (last known GPU fds kept)")
+            notes.append(_("scan budget reached, {count} processes not rescanned this refresh "
+                           "(last known GPU fds kept)").format(count=deferred))
         if denied:
-            notes.append(f"{denied} processes not inspectable (other users' or kernel threads; sudo includes them)")
+            notes.append(_("{count} processes not inspectable (other users' or kernel threads; sudo includes them)").format(
+                count=denied))
         if incomplete:
-            notes.append(f"{len(incomplete)} processes whose fds or fdinfo couldn't all be read")
-        self.status = "; ".join(notes)
+            notes.append(_("{count} processes whose fds or fdinfo couldn't all be read").format(count=len(incomplete)))
+        self.status = _("; ").join(notes)
         return clients, kfd, incomplete
 
     def sample(self) -> tuple[dict[int, dict[int, ProcGpu]], dict[int, AdapterGpu]]:

@@ -20,6 +20,7 @@ import urllib.request
 from dataclasses import dataclass, field
 
 from .gguf import GgufInfo, is_gguf, read_gguf
+from .i18n import _
 from .procinfo import MappedModel, ProcDetail, make_model
 
 MiB = 1 << 20
@@ -295,7 +296,7 @@ class LlmView:
         g = self.models[i]
         if f and f.kind_hint:
             return f.kind_label
-        return g.kind + (f" ({g.decision_type})" if g.decision_type else "")
+        return _(g.kind) + (f" ({g.decision_type})" if g.decision_type else "")
 
 
 def gb(n: float) -> str:
@@ -371,7 +372,7 @@ def build_view(d: ProcDetail, vram: float, shared: float, server: ServerInfo | N
     if v.log:
         gpu = {dev: kinds for dev, kinds in v.log.items() if is_gpu_device(dev)}
         acc = 0
-        for kind, label in (("weights", "weights"), ("kv", "KV cache"), ("compute", "compute buffers")):
+        for kind, label in (("weights", _("weights")), ("kv", _("KV cache")), ("compute", _("compute buffers"))):
             n = sum(k.get(kind, 0) for k in gpu.values())
             if n:
                 devs = ",".join(sorted(dev for dev, k in gpu.items() if k.get(kind)))
@@ -379,63 +380,71 @@ def build_view(d: ProcDetail, vram: float, shared: float, server: ServerInfo | N
                 acc += n
         cpu_w = sum(k.get("weights", 0) for dev, k in v.log.items() if not is_gpu_device(dev))
         if cpu_w and main and cpu_w > main.token_embd_bytes * 1.5:
-            v.notes.append(f"{gb(cpu_w)} of weights are on the CPU side (partial offload or CPU-mapped).")
+            v.notes.append(_("{size} of weights are on the CPU side (partial offload or CPU-mapped).").format(
+                size=gb(cpu_w)))
         if total is not None and total > acc:
-            v.segments.append(Segment("runtime and other overhead", total - acc, "runtime"))
+            v.segments.append(Segment(_("runtime and other overhead"), total - acc, "runtime"))
     else:
         ngl = v.flags.get("ngl") if len(v.models) == 1 else None
         weights = sum(g.gpu_weight_bytes(ngl) for g in v.models if g.kind != "LoRA adapter")
         weights += sum(g.tensor_bytes for g in v.models if g.kind == "LoRA adapter")
         if total is not None and weights > total * 1.03 and total > 0:
-            v.notes.append(f"Weights need ~{gb(weights)} but the process holds {gb(total)} of VRAM: "
-                           "partial offload, paging, or placement on another GPU may explain the gap.")
+            v.notes.append(_("Weights need ~{weights} but the process holds {total} of VRAM: "
+                             "partial offload, paging, or placement on another GPU may explain the gap.").format(
+                                 weights=gb(weights), total=gb(total)))
             weights = total
         if weights:
-            label = "weights" if len(v.models) == 1 else f"weights ({len(v.models)} files)"
+            label = _("weights") if len(v.models) == 1 else _("weights ({count} files)").format(count=len(v.models))
             v.segments.append(Segment(label, weights, "weights"))
         kv = v.kv_per_token * v.n_ctx if (v.kv_per_token and v.n_ctx) else 0
         rest = total - weights if total is not None else None
         if rest is None:
             if kv:
-                v.segments.append(Segment(f"KV cache ({v.n_ctx:,} ctx, {v.kv_type}) est.", kv, "kv"))
-            v.notes.append("This process's VRAM total is unknown (WSL charges it to the VM on the Windows host, "
-                           "or the driver hides per-process memory); segments are estimates from the model file and launch flags.")
+                v.segments.append(Segment(_("KV cache ({n_ctx:,} ctx, {kv_type}) est.").format(
+                    n_ctx=v.n_ctx, kv_type=v.kv_type), kv, "kv"))
+            v.notes.append(_("This process's VRAM total is unknown (WSL charges it to the VM on the Windows host, "
+                             "or the driver hides per-process memory); segments are estimates from the model file and launch flags."))
         elif kv and kv <= rest:
             swa = main.sliding_window if main else None
-            v.segments.append(Segment(f"KV cache ({v.n_ctx:,} ctx, {v.kv_type}) est.{' max' if swa else ''}", kv, "kv"))
+            kv_label = _("KV cache ({n_ctx:,} ctx, {kv_type}) est. max") if swa else _("KV cache ({n_ctx:,} ctx, {kv_type}) est.")
+            v.segments.append(Segment(kv_label.format(n_ctx=v.n_ctx, kv_type=v.kv_type), kv, "kv"))
             if swa:
-                v.notes.append(f"Sliding-window attention ({swa} tokens): most layers keep a short KV window, "
-                               "so the real KV cache is smaller than this estimate.")
+                v.notes.append(_("Sliding-window attention ({swa} tokens): most layers keep a short KV window, "
+                                 "so the real KV cache is smaller than this estimate.").format(swa=swa))
             rest -= kv
             if rest > 0:
-                v.segments.append(Segment("compute buffers + runtime", rest, "runtime"))
+                v.segments.append(Segment(_("compute buffers + runtime"), rest, "runtime"))
         elif rest > 0 and no_kv:
-            v.segments.append(Segment("compute buffers + runtime", rest, "runtime"))
+            v.segments.append(Segment(_("compute buffers + runtime"), rest, "runtime"))
         elif rest > 0:
-            v.segments.append(Segment("KV cache + compute + runtime", rest, "unknown"))
+            v.segments.append(Segment(_("KV cache + compute + runtime"), rest, "unknown"))
 
     if not v.models and not v.log and total:
-        v.notes.append("No GGUF mapped. Model may be loaded with --no-mmap or via another format.")
+        v.notes.append(_("No GGUF mapped. Model may be loaded with --no-mmap or via another format."))
     if no_kv:
-        kinds = ", ".join(sorted({f"{g.decision_type} {g.kind}" if g.decision_type else g.kind for g in primaries}))
-        v.notes.append(f"Non-causal encoder ({kinds}): no KV cache grows with use; VRAM is weights + compute.")
+        kinds = ", ".join(sorted({f"{g.decision_type} {_(g.kind)}" if g.decision_type else _(g.kind) for g in primaries}))
+        v.notes.append(_("Non-causal encoder ({kinds}): no KV cache grows with use; VRAM is weights + compute.").format(
+            kinds=kinds))
     if main and v.kv_per_token:
-        v.notes.append(f"KV cost {v.kv_per_token / 1024:.0f} KB/token ({v.kv_type}): "
-                       f"4k ctx = {gb(v.kv_per_token * 4096)}, 32k ctx = {gb(v.kv_per_token * 32768)}.")
+        v.notes.append(_("KV cost {kb:.0f} KB/token ({kv_type}): 4k ctx = {at_4k}, 32k ctx = {at_32k}.").format(
+            kb=v.kv_per_token / 1024, kv_type=v.kv_type, at_4k=gb(v.kv_per_token * 4096),
+            at_32k=gb(v.kv_per_token * 32768)))
     if shared > 256 * MiB:
-        v.notes.append(f"! {gb(shared)} is in SHARED GPU memory (system RAM over PCIe). "
-                       "May include pinned host buffers; under VRAM pressure, fallback can slow inference.")
+        v.notes.append(_("! {size} is in SHARED GPU memory (system RAM over PCIe). "
+                         "May include pinned host buffers; under VRAM pressure, fallback can slow inference.").format(
+                             size=gb(shared)))
     if total is not None and total < 64 * MiB and v.models:
-        v.notes.append("Model is mapped but almost nothing is in VRAM: CPU inference, or another GPU.")
+        v.notes.append(_("Model is mapped but almost nothing is in VRAM: CPU inference, or another GPU."))
     for front in (s for s in (server, host) if s and s.kind == "ollama"):
         mine = [om for om in front.models if om in matched]
         for om in mine or front.models:  # unmatched: show everything Ollama has loaded
             if om.get("size"):
                 pct = 100 * (om.get("size_vram") or 0) / om["size"]
-                v.notes.append(f"Ollama{'' if mine else ' (not matched to this runner)'}: {om['name']} "
-                               f"{gb(om['size'])} total, {pct:.0f}% on GPU, ctx {om.get('ctx') or '?'}.")
+                template = (_("Ollama: {name} {total} total, {pct:.0f}% on GPU, ctx {ctx}.") if mine else
+                            _("Ollama (not matched to this runner): {name} {total} total, {pct:.0f}% on GPU, ctx {ctx}."))
+                v.notes.append(template.format(name=om["name"], total=gb(om["size"]), pct=pct, ctx=om.get("ctx") or "?"))
     if host and host.kind == "lmstudio":
         for m in host.models[:4]:
-            v.notes.append(f"LM Studio: {m['name']} {m.get('type') or ''} {m.get('quant') or ''} "
-                           f"ctx {m.get('ctx') or '?'}.")
+            v.notes.append(_("LM Studio: {name} {type} {quant} ctx {ctx}.").format(
+                name=m["name"], type=m.get("type") or "", quant=m.get("quant") or "", ctx=m.get("ctx") or "?"))
     return v

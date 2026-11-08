@@ -21,6 +21,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from .i18n import _
 from .pdh import _ADAPTER_RE, _ENGINE_RE, _PROC_RE, AdapterGpu, ProcGpu, _norm_engine, luid_key
 
 _POWERSHELL_FALLBACK = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -477,8 +478,8 @@ class ContextTracker:
         reason = ""
         if unsure:
             if len(free) < len(unsure):
-                reason = (f"{len(unsure)} Linux GPU process(es) without a VM context to match "
-                          "(one may not have created its GPU context yet)")
+                reason = _("{count} Linux GPU process(es) without a VM context to match "
+                           "(one may not have created its GPU context yet)").format(count=len(unsure))
             # A process seen moments ago may not have created its context yet; the one free context could
             # then be a foreign one (WSLg, another distro), so wait for its own context instead of eliminating.
             recent = any(p not in self.initial and now - self.seen[p] <= self.PENDING for p in unsure)

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import psutil
 
 from .gguf import is_gguf, read_gguf
+from .i18n import _
 from .stores import store_name
 
 # (tag, library patterns: Windows DLLs, Linux shared objects with the version suffix removed, and macOS
@@ -88,7 +89,7 @@ class MappedModel:
 
     @property
     def kind_label(self) -> str:
-        return f"likely {self.kind_hint} (name)" if self.kind_hint else self.kind
+        return _("likely {kind} (name)").format(kind=_(self.kind_hint)) if self.kind_hint else _(self.kind)
 
     def add_source(self, source: str) -> None:
         if source not in self.sources:
@@ -99,10 +100,10 @@ class MappedModel:
         s = set(self.sources)
         how = "+".join(x for x in ("api", "mapped", "cmdline") if x in s)
         if len(s) >= 2 and s & {"api", "mapped"}:
-            return f"confirmed ({how})"
+            return _("confirmed ({how})").format(how=how)
         if not how and "installed" in s:
-            return "installed, not proven loaded"
-        return {"mapped": "in use (mapped)", "cmdline": "launch arg", "api": "reported (api)"}.get(how, how)
+            return _("installed, not proven loaded")
+        return {"mapped": _("in use (mapped)"), "cmdline": _("launch arg"), "api": _("reported (api)")}.get(how, how)
 
 
 def _is_diffusion_cmdline(cmd: list[str]) -> bool:

@@ -13,6 +13,7 @@ from .amdsmi import AmdSmi, _bdf
 from .adl import Adl
 from .dxgi import VENDOR_NVIDIA, Adapter
 from .handy import HandyEvidence, inspect_handy
+from .i18n import _
 from .llm import LlmView, ServerProber, build_view, gb, ollama_log_path
 from .nvml import Nvml, NvDevice
 from .pdh import ProcGpu
@@ -72,32 +73,34 @@ class ProcRow:
         """One-line 'what's in there' summary for the process table."""
         if self.handy:
             if self.handy.last_model:
-                return f"Handy last log ({self.handy.last_event}): {self.handy.last_model.rsplit('/', 1)[-1]}"
+                return _("Handy last log ({event}): {model}").format(
+                    event=self.handy.last_event, model=self.handy.last_model.rsplit("/", 1)[-1])
             if self.handy.selected_model:
-                return f"Handy selected (not load proof): {self.handy.selected_model.rsplit('/', 1)[-1]}"
+                return _("Handy selected (not load proof): {model}").format(
+                    model=self.handy.selected_model.rsplit("/", 1)[-1])
         if self.llm and self.llm.models:
             parts = []
             for i, g in enumerate(self.llm.models):
                 if g.kind in ("vision projector", "LoRA adapter"):
-                    parts.append(f"+{g.kind}")
+                    parts.append(f"+{_(g.kind)}")
                 else:
                     parts.append(f"{self.llm.label(i)} {g.params_label} {g.quant}")
             return ", ".join(parts)
         if self.detail.models:
             return ", ".join((m.store_name or os.path.basename(m.path)) +
-                             (f" ({m.kind_label})" if m.kind_hint else "") for m in self.detail.models[:2])
+                             (_(" ({kind})").format(kind=m.kind_label) if m.kind_hint else "") for m in self.detail.models[:2])
         if self.detail.candidates:
-            return "installed (unproven): " + ", ".join(
+            return _("installed (unproven): {items}").format(items=", ".join(
                 f"{m.store_name or os.path.basename(m.path)} {gb(m.size)}" +
-                (f" ({m.kind_label})" if m.kind_hint else "") for m in self.detail.candidates[:2])
+                (_(" ({kind})").format(kind=m.kind_label) if m.kind_hint else "") for m in self.detail.candidates[:2]))
         return {
-            "compositor": "desktop back buffers + composed frames",
-            "wsl-vm": "all Linux GPU memory (every WSL distro + WSLg)",
-            "external": "a process in another PID namespace (host or another container)",
-            "kernel": "driver/kernel allocations",
-            "browser": "page textures, video, canvas/WebGL",
-            "video": "video frames (decode/encode)",
-            "3D/game": "textures, meshes, render targets",
+            "compositor": _("desktop back buffers + composed frames"),
+            "wsl-vm": _("all Linux GPU memory (every WSL distro + WSLg)"),
+            "external": _("a process in another PID namespace (host or another container)"),
+            "kernel": _("driver/kernel allocations"),
+            "browser": _("page textures, video, canvas/WebGL"),
+            "video": _("video frames (decode/encode)"),
+            "3D/game": _("textures, meshes, render targets"),
         }.get(self.kind, "")
 
 
@@ -141,11 +144,12 @@ def _is_live(g: ProcGpu) -> bool:
 def select_adapter(adapters: list[Adapter], gpu_index: int) -> Adapter | None:
     choices = ordered_adapters(adapters)
     if gpu_index < 0:
-        raise ValueError("--gpu must be a non-negative index")
+        raise ValueError(_("--gpu must be a non-negative index"))
     if gpu_index >= len(choices):
         if not choices and gpu_index == 0:
             return None
-        raise ValueError(f"--gpu {gpu_index} is out of range; {len(choices)} GPU adapter(s) available")
+        raise ValueError(_("--gpu {index} is out of range; {count} GPU adapter(s) available").format(
+            index=gpu_index, count=len(choices)))
     return choices[gpu_index]
 
 
@@ -270,11 +274,11 @@ class Collector:
         if BACKEND == "wddm" and self.adapter:
             snap.counter_adapter_matched = luid in per_luid or luid in adapters
             if not snap.counter_adapter_matched:
-                snap.counter_status = ("Windows GPU counters could not be matched to the selected adapter; "
-                                       "VRAM and processes are unavailable. This can occur in GPU-PV VMs.")
+                snap.counter_status = _("Windows GPU counters could not be matched to the selected adapter; "
+                                        "VRAM and processes are unavailable. This can occur in GPU-PV VMs.")
             elif a is None or a.dedicated is None or a.shared is None:
-                snap.counter_status = ("Some Windows adapter memory counters are unavailable; "
-                                       "GPU-PV VMs may not expose them.")
+                snap.counter_status = _("Some Windows adapter memory counters are unavailable; "
+                                        "GPU-PV VMs may not expose them.")
         if self.drm_card is not None:
             snap.process_status = self.counters.drm.status
         live = [(pid, g) for pid, g in procs.items() if _is_live(g)]
@@ -286,8 +290,8 @@ class Collector:
 
         for pid, g in getattr(self.counters, "outside", {}).get(luid, {}).items():
             # A container sees the host's PIDs from NVML; unmatched ones are other containers or the host.
-            snap.procs.append(ProcRow(pid, "(outside this container)", "external", g,
-                                      ProcDetail(pid, "(outside this container)"), host=True, origin="outside"))
+            outside = _("(outside this container)")
+            snap.procs.append(ProcRow(pid, outside, "external", g, ProcDetail(pid, outside), host=True, origin="outside"))
         if self.host is not None:  # current inferred sizes drive both scan priority and the LLM breakdown
             self._add_host_rows(snap)
         local_rows = [r for r in snap.procs if not r.host]

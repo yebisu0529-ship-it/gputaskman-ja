@@ -10,9 +10,10 @@ import tempfile
 import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from markdown_it import MarkdownIt
 from rich.cells import cell_len, set_cell_size
@@ -26,13 +27,16 @@ from gputaskman import diff as diff_module
 from gputaskman import locale_ja, report
 from gputaskman.app import COLUMNS, EXPLAIN, HELP_MD, KIND_STYLE, MODEL_COLUMNS, GpuTaskManager, HelpScreen, help_markdown
 from gputaskman.cli import main
-from gputaskman.collector import ProcRow
+from gputaskman.collector import Collector, ProcRow
+from gputaskman.dxgi import Adapter
+from gputaskman.handy import HandyEvidence, inspect_handy
 from gputaskman.i18n import _, _windows_ui_language, current_language, detect_language, fit, set_language
+from gputaskman.llm import LlmView, ServerInfo, build_view
 from gputaskman.nvml import NvDevice
-from gputaskman.pdh import ProcGpu
-from gputaskman.procinfo import ProcDetail
+from gputaskman.pdh import AdapterGpu, ProcGpu
+from gputaskman.procinfo import ProcDetail, make_model
 from gputaskman.report import to_text
-from test_core import snapshot
+from test_core import gguf, snapshot
 from test_diff import llm as llm_view
 from test_diff import proc as diff_proc
 from test_diff import snap as diff_snap
@@ -186,27 +190,36 @@ def render_time_msgids():
             report.INFERRED_NOTE, report.ORDER_NOTE} | set(report.DRM_NOTES.values())
     ids |= {label for _key, label in diff_module.DEVICE} | set(diff_module.SEGMENT_ORDER)
     ids |= {"runtime-reported", "estimated"}  # diff's per-segment source, translated where its text is built
-    ids |= static_host_statuses()
+    ids |= static_host_statuses() | gguf_kinds()
     ids.add("palette")  # Textual's own Footer label for ctrl+p, translated by the same active_bindings override
     return ids
 
 
+def string_literals(expression):
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        return [expression.value]
+    if isinstance(expression, ast.IfExp):
+        return string_literals(expression.body) + string_literals(expression.orelse)
+    return []
+
+
+def gguf_kinds():
+    """What GgufInfo.kind can return. The code compares these, so they are translated where they are shown."""
+    tree = ast.parse((PACKAGE / "gguf.py").read_text(encoding="utf-8"))
+    kind = next(node for cls in tree.body if isinstance(cls, ast.ClassDef) and cls.name == "GgufInfo"
+                for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "kind")
+    return {value for node in ast.walk(kind) if isinstance(node, ast.Return) for value in string_literals(node.value)}
+
+
 def static_host_statuses():
     """Literals assigned to a .status or .host_status attribute; the f-string ones are dynamic and stay English."""
-    def literals(expression):
-        if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
-            return [expression.value]
-        if isinstance(expression, ast.IfExp):
-            return literals(expression.body) + literals(expression.orelse)
-        return []
-
     found = set()
     for _path, tree in package_trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and any(
                     isinstance(target, ast.Attribute) and target.attr in ("status", "host_status")
                     for target in node.targets):
-                found |= {value for value in literals(node.value) if value}
+                found |= {value for value in string_literals(node.value) if value}
     return found
 
 
@@ -542,6 +555,212 @@ class DiffTextTests(unittest.TestCase):
                 process = next(index for index, line in enumerate(lines) if line.startswith(process_header))
                 for table in (lines[device:device + 5], lines[process:process + 3]):
                     self.assertEqual({cell_len(line) for line in table}, {cell_len(table[0])}, table)
+
+
+class DataStringTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(set_language, "en")
+
+    def llm_view(self, **extra):
+        meta = {"block_count": 32, "context_length": 4096, "attention.head_count": 32, "attention.head_count_kv": 8,
+                "embedding_length": 4096, "general.name": "Snapshot_Cfg", **extra}
+        info = gguf("qwen35", **meta)
+        info.layer_bytes = {index: 10 * MiB for index in range(32)}
+        with patch("gputaskman.procinfo.read_gguf", return_value=info):
+            model = make_model("snapshot.gguf", 1000, 0, True, "mapped", "")
+        detail = ProcDetail(10, "llama-server.exe", models=[model])
+        server = ServerInfo("llama-server", "http://127.0.0.1:1", n_ctx=4096, model_path=model.path)
+        return detail, server, info
+
+    def test_segments_and_notes_follow_the_language_and_keep_their_markers(self):
+        for language, labels, notes in (
+            ("en", ["weights", "KV cache (4,096 ctx, f16) est. max", "compute buffers + runtime"],
+             ["Sliding-window attention (1024 tokens): most layers keep a short KV window, so the real KV cache is "
+              "smaller than this estimate.", "KV cost 128 KB/token (f16): 4k ctx = 512 MB, 32k ctx = 4.00 GB.",
+              "! 512 MB is in SHARED GPU memory (system RAM over PCIe). May include pinned host buffers; under VRAM "
+              "pressure, fallback can slow inference."]),
+            ("ja", ["重み", "KVキャッシュ (4,096 ctx, f16) 推定（上限）", "計算バッファー + ランタイム"],
+             ["スライディングウィンドウアテンション（1024トークン）: 多くのレイヤーはKVを短いウィンドウ分しか保持しないため、"
+              "実際のKVキャッシュはこの推定より小さくなります。",
+              "KVコスト 128 KB/token (f16): 4k ctx = 512 MB、32k ctx = 4.00 GB。",
+              "! 512 MBが共有RAM（PCIe経由でGPUからアクセスするシステムRAM）にあります。ピン留めされたホストバッファーを含む場合があります。"
+              "VRAMが逼迫すると、フォールバックによって推論が遅くなることがあります。"])):
+            with self.subTest(language=language):
+                set_language(language)
+                detail, server, info = self.llm_view(**{"attention.sliding_window": 1024})
+                with patch("gputaskman.llm.read_gguf", return_value=info):
+                    view = build_view(detail, 2 * GiB, 512 * MiB, server)
+                self.assertEqual([segment.label for segment in view.segments], labels)
+                self.assertEqual([segment.kind for segment in view.segments], ["weights", "kv", "runtime"])
+                self.assertEqual(view.notes, notes)
+                self.assertTrue(view.notes[-1].startswith("!"))
+
+    def test_buffer_log_segments_name_their_devices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "server.log"
+            log.write_text("llama_context: CPU_Mapped model buffer size = 30 MiB\n"
+                           "llama_context: CUDA0 model buffer size = 100 MiB\n"
+                           "llama_context: CUDA0 KV buffer size = 30 MiB\n"
+                           "llama_context: CUDA0 compute buffer size = 5 MiB\n", encoding="utf-8")
+            for language, labels, note in (
+                ("en", ["weights (CUDA0)", "KV cache (CUDA0)", "compute buffers (CUDA0)", "runtime and other overhead"],
+                 "30 MB of weights are on the CPU side (partial offload or CPU-mapped)."),
+                ("ja", ["重み (CUDA0)", "KVキャッシュ (CUDA0)", "計算バッファー (CUDA0)", "ランタイムなどのオーバーヘッド"],
+                 "重みのうち30 MBはCPU側にあります（部分オフロード、またはCPUにマップ済み）。"),
+            ):
+                with self.subTest(language=language):
+                    set_language(language)
+                    detail, _server, info = self.llm_view()
+                    with patch("gputaskman.llm.read_gguf", return_value=info):
+                        view = build_view(detail, GiB, 0, None, str(log))
+                    self.assertEqual([segment.label for segment in view.segments], labels)
+                    self.assertIn(note, view.notes)
+
+    def test_evidence_and_kind_labels_keep_the_provenance_ladder(self):
+        decided = gguf("qwen35", block_count=2, context_length=4096)
+        with patch("gputaskman.procinfo.read_gguf", return_value=decided):
+            hinted = make_model("OpenJev.gguf", 1000, 0, True, "mapped", "")
+        installed = make_model("OpenJev.safetensors", 1000, 0, False, "installed", "")
+        cmdline = make_model("a.gguf", 1000, 0, False, "cmdline", "")
+        api = make_model("b.gguf", 1000, 0, False, "api", "")
+        both = make_model("c.gguf", 1000, 0, False, "mapped", "")
+        both.add_source("api")
+        for language, expected in (
+            ("en", ["in use (mapped)", "likely decision model (name)", "installed, not proven loaded", "launch arg",
+                    "reported (api)", "confirmed (api+mapped)"]),
+            ("ja", ["使用中（マップ済み）", "意思決定モデルの可能性（名前から）", "インストール済み、ロードは未確認", "起動引数",
+                    "ランタイム報告 (api)", "確認済み (api+mapped)"]),
+        ):
+            with self.subTest(language=language):
+                set_language(language)
+                self.assertEqual([hinted.evidence, hinted.kind_label, installed.evidence, cmdline.evidence, api.evidence,
+                                  both.evidence], expected)
+        self.assertEqual(hinted.kind_hint, "decision model")
+        self.assertEqual(hinted.kind, "LLM")
+
+    def test_gguf_kinds_are_translated_where_shown_and_compared_in_english(self):
+        set_language("ja")
+        cases = {"LLM": "LLM", "decision model": "意思決定モデル", "embedding model": "埋め込みモデル", "reranker": "リランカー",
+                 "speech model": "音声モデル", "vision projector": "ビジョンプロジェクター", "LoRA adapter": "LoRAアダプター"}
+        for kind, japanese in cases.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(_(kind), japanese)
+        view = LlmView(models=[gguf("clip"), gguf("qwen3", **{"general.type": "adapter"})])
+        self.assertEqual([model.kind for model in view.models], ["vision projector", "LoRA adapter"])
+        self.assertEqual(ProcRow(1, "x", "LLM", ProcGpu(), ProcDetail(1, "x"), view).inside,
+                         "+ビジョンプロジェクター, +LoRAアダプター")
+        self.assertEqual(view.kind_label(0), "ビジョンプロジェクター")
+
+    def test_inside_summaries(self):
+        hinted = make_model("OpenJev.safetensors", 1000, 0, False, "mapped", "")
+        installed = make_model("OpenJev.safetensors", GiB, 0, False, "installed", "")
+        rows = {
+            "handy last": ProcRow(1, "handy.exe", "AI", ProcGpu(), ProcDetail(1, "handy.exe"),
+                                  handy=HandyEvidence("a/b.gguf", "a/model.gguf", "loaded", "2026-11-02T23:01:00+00:00")),
+            "handy selected": ProcRow(1, "handy.exe", "AI", ProcGpu(), ProcDetail(1, "handy.exe"),
+                                      handy=HandyEvidence("handy/model.gguf")),
+            "mapped": ProcRow(1, "python.exe", "AI", ProcGpu(), ProcDetail(1, "python.exe", models=[hinted])),
+            "installed": ProcRow(1, "python.exe", "AI", ProcGpu(), ProcDetail(1, "python.exe", candidates=[installed])),
+            "compositor": ProcRow(1, "dwm.exe", "compositor", ProcGpu(), ProcDetail(1, "dwm.exe")),
+            "wsl-vm": ProcRow(1, "vm", "wsl-vm", ProcGpu(), ProcDetail(1, "vm")),
+            "external": ProcRow(1, "x", "external", ProcGpu(), ProcDetail(1, "x")),
+            "kernel": ProcRow(1, "System", "kernel", ProcGpu(), ProcDetail(1, "System")),
+            "browser": ProcRow(1, "edge", "browser", ProcGpu(), ProcDetail(1, "edge")),
+            "video": ProcRow(1, "v", "video", ProcGpu(), ProcDetail(1, "v")),
+            "3D/game": ProcRow(1, "g", "3D/game", ProcGpu(), ProcDetail(1, "g")),
+        }
+        expected = {
+            "en": {
+                "handy last": "Handy last log (loaded): model.gguf",
+                "handy selected": "Handy selected (not load proof): model.gguf",
+                "mapped": "OpenJev.safetensors (likely decision model (name))",
+                "installed": "installed (unproven): OpenJev.safetensors 1.00 GB (likely decision model (name))",
+                "compositor": "desktop back buffers + composed frames",
+                "wsl-vm": "all Linux GPU memory (every WSL distro + WSLg)",
+                "external": "a process in another PID namespace (host or another container)",
+                "kernel": "driver/kernel allocations", "browser": "page textures, video, canvas/WebGL",
+                "video": "video frames (decode/encode)", "3D/game": "textures, meshes, render targets",
+            },
+            "ja": {
+                "handy last": "Handyの最新ログ（loaded）: model.gguf",
+                "handy selected": "Handyで選択中（ロードの証拠ではありません）: model.gguf",
+                "mapped": "OpenJev.safetensors（意思決定モデルの可能性（名前から））",
+                "installed": "インストール済み（未確認）: OpenJev.safetensors 1.00 GB（意思決定モデルの可能性（名前から））",
+                "compositor": "デスクトップのバックバッファーと合成済みフレーム",
+                "wsl-vm": "LinuxのGPUメモリすべて（全WSLディストリビューションとWSLg）",
+                "external": "別のPID名前空間のプロセス（ホストまたは別のコンテナー）",
+                "kernel": "ドライバー/カーネルによる割り当て", "browser": "ページのテクスチャ、ビデオ、canvas/WebGL",
+                "video": "ビデオフレーム（デコード/エンコード）", "3D/game": "テクスチャ、メッシュ、レンダーターゲット",
+            },
+        }
+        for language, texts in expected.items():
+            set_language(language)
+            for name, row in rows.items():
+                with self.subTest(language=language, row=name):
+                    self.assertEqual(row.inside, texts[name])
+
+    def test_handy_event_names_are_translated_where_the_log_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            appdata, localappdata = Path(directory) / "Roaming", Path(directory) / "Local"
+            log_dir = localappdata / "com.pais.handy" / "logs"
+            log_dir.mkdir(parents=True)
+            (appdata / "com.pais.handy").mkdir(parents=True)
+            (log_dir / "handy.log").write_text(
+                "[2026-11-02][23:01:00][transcription][INFO] Loaded whisper model 'model-Q8_0.gguf'\n"
+                "[2026-11-02][23:01:03][transcription][INFO] Model unloaded due to inactivity (took 20ms)\n",
+                encoding="utf-8")
+            started = datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc).timestamp()
+            events = {}
+            for language in ("en", "ja"):
+                set_language(language)
+                with patch.dict("gputaskman.handy._log_cache", clear=True):
+                    events[language] = inspect_handy(started, str(appdata), str(localappdata))
+        self.assertEqual((events["en"].last_event, events["ja"].last_event), ("unloaded", "アンロード済み"))
+        self.assertEqual({event.last_model for event in events.values()}, {"model-Q8_0.gguf"})
+
+    def test_counter_status_and_outside_rows_are_built_in_the_selected_language(self):
+        for language, mismatch, outside in (
+            ("en", "Windows GPU counters could not be matched to the selected adapter; VRAM and processes are "
+                   "unavailable. This can occur in GPU-PV VMs.", "(outside this container)"),
+            ("ja", "WindowsのGPUカウンターを、選択したアダプターに対応付けられませんでした。VRAMとプロセスは取得できません。"
+                   "GPU-PVのVMでは発生することがあります。", "（このコンテナーの外）"),
+        ):
+            with self.subTest(language=language):
+                set_language(language)
+                c = Collector.__new__(Collector)
+                c.adapter = Adapter(0x4bb7, "GPU", 0x10DE, 16 * GiB, 0, False)
+                c.adapters = [c.adapter]
+                c.gpu_index, c.scan_budget, c.host, c.host_status = 0, None, None, ""
+                c.nvml = Mock(ok=False)
+                c.counters = Mock(outside={0x4bb7: {99: ProcGpu(dedicated=58 * MiB)}})
+                c.counters.sample.return_value = ({0x4bf1: {}}, {0x4bf1: AdapterGpu(dedicated=GiB, shared=0)})
+                c.inspector, c.prober = Mock(), Mock()
+                with patch("gputaskman.collector.BACKEND", "wddm"):
+                    s = c.sample()
+                self.assertEqual(s.counter_status, mismatch)
+                self.assertEqual([row.name for row in s.procs], [outside])
+                self.assertEqual(s.procs[0].detail.name, outside)
+
+    def test_scan_notes_and_wsl_reasons(self):
+        from gputaskman.drm import DrmCounters
+        from gputaskman.wslhost import ContextTracker
+
+        for language, status, reason in (
+            ("en", "/nope is not readable", "1 Linux GPU process(es) without a VM context to match "
+                                            "(one may not have created its GPU context yet)"),
+            ("ja", "/nopeを読み取れません", "VMコンテキストと対応付けられないLinux GPUプロセスが1個あります"
+                                       "（GPUコンテキストをまだ作成していない可能性があります）"),
+        ):
+            with self.subTest(language=language), tempfile.TemporaryDirectory() as directory:
+                set_language(language)
+                counters = DrmCounters(found=[], proc="/nope")
+                counters._clients()
+                self.assertEqual(counters.status, status)
+                tracker = ContextTracker(path=os.path.join(directory, "ctx.json"), boot_id="boot", self_pid=1)
+                _guesses, why = tracker.update(7, [], [(5, 1.0)])
+                self.assertEqual(why, reason)
+        set_language("ja")
+        self.assertEqual(_("; ").join(["a", "b"]), "a。b")
 
 
 class CliLanguageTests(unittest.TestCase):

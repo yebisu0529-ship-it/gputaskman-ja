@@ -477,4 +477,103 @@ _DIFF = {
         "実行していなかったか、GPU使用量が小さすぎて一覧に載らなかったかのどちらかです。",
 }
 
-MESSAGES: dict[str, str] = {**_UI, **_INSPECTOR, **_KINDS, **_EXPLAIN, **_HELP, **_REPORT, **_CLI, **_DIFF}
+_COLLECTOR = {
+    "Handy last log ({event}): {model}": "Handyの最新ログ（{event}）: {model}",
+    "Handy selected (not load proof): {model}": "Handyで選択中（ロードの証拠ではありません）: {model}",
+    " ({kind})": "（{kind}）",
+    "installed (unproven): {items}": "インストール済み（未確認）: {items}",
+    "desktop back buffers + composed frames": "デスクトップのバックバッファーと合成済みフレーム",
+    "all Linux GPU memory (every WSL distro + WSLg)": "LinuxのGPUメモリすべて（全WSLディストリビューションとWSLg）",
+    "a process in another PID namespace (host or another container)":
+        "別のPID名前空間のプロセス（ホストまたは別のコンテナー）",
+    "driver/kernel allocations": "ドライバー/カーネルによる割り当て",
+    "page textures, video, canvas/WebGL": "ページのテクスチャ、ビデオ、canvas/WebGL",
+    "video frames (decode/encode)": "ビデオフレーム（デコード/エンコード）",
+    "textures, meshes, render targets": "テクスチャ、メッシュ、レンダーターゲット",
+    "(outside this container)": "（このコンテナーの外）",
+    "--gpu {index} is out of range; {count} GPU adapter(s) available":
+        "--gpu {index}は範囲外です。使用できるGPUアダプターは{count}個です",
+    "Windows GPU counters could not be matched to the selected adapter; "
+    "VRAM and processes are unavailable. This can occur in GPU-PV VMs.":
+        "WindowsのGPUカウンターを、選択したアダプターに対応付けられませんでした。VRAMとプロセスは取得できません。"
+        "GPU-PVのVMでは発生することがあります。",
+    "Some Windows adapter memory counters are unavailable; GPU-PV VMs may not expose them.":
+        "Windowsのアダプターメモリカウンターの一部が取得できません。GPU-PVのVMでは公開されないことがあります。",
+}
+_LLM = {
+    "KV cache": "KVキャッシュ",
+    "compute buffers": "計算バッファー",
+    "runtime and other overhead": "ランタイムなどのオーバーヘッド",
+    "weights ({count} files)": "重み（{count}ファイル）",
+    "KV cache ({n_ctx:,} ctx, {kv_type}) est.": "KVキャッシュ ({n_ctx:,} ctx, {kv_type}) 推定",
+    "KV cache ({n_ctx:,} ctx, {kv_type}) est. max": "KVキャッシュ ({n_ctx:,} ctx, {kv_type}) 推定（上限）",
+    "compute buffers + runtime": "計算バッファー + ランタイム",
+    "KV cache + compute + runtime": "KVキャッシュ + 計算バッファー + ランタイム",
+    "{size} of weights are on the CPU side (partial offload or CPU-mapped).":
+        "重みのうち{size}はCPU側にあります（部分オフロード、またはCPUにマップ済み）。",
+    "Weights need ~{weights} but the process holds {total} of VRAM: "
+    "partial offload, paging, or placement on another GPU may explain the gap.":
+        "重みには約{weights}が必要ですが、このプロセスが保持しているVRAMは{total}です。"
+        "部分オフロード、ページアウト、または別のGPUへの配置が、この差の理由かもしれません。",
+    "This process's VRAM total is unknown (WSL charges it to the VM on the Windows host, "
+    "or the driver hides per-process memory); segments are estimates from the model file and launch flags.":
+        "このプロセスのVRAM合計は不明です（WSLではWindowsホスト側でVMに計上されるか、"
+        "ドライバーがプロセスごとのメモリを公開していません）。各区分はモデルファイルと起動フラグからの推定です。",
+    "Sliding-window attention ({swa} tokens): most layers keep a short KV window, "
+    "so the real KV cache is smaller than this estimate.":
+        "スライディングウィンドウアテンション（{swa}トークン）: 多くのレイヤーはKVを短いウィンドウ分しか保持しないため、"
+        "実際のKVキャッシュはこの推定より小さくなります。",
+    "No GGUF mapped. Model may be loaded with --no-mmap or via another format.":
+        "マップされたGGUFはありません。モデルは--no-mmapで、または別の形式でロードされている可能性があります。",
+    "Non-causal encoder ({kinds}): no KV cache grows with use; VRAM is weights + compute.":
+        "非因果エンコーダー（{kinds}）: 使用に伴って大きくなるKVキャッシュはありません。VRAMの内訳は重みと計算バッファーです。",
+    "KV cost {kb:.0f} KB/token ({kv_type}): 4k ctx = {at_4k}, 32k ctx = {at_32k}.":
+        "KVコスト {kb:.0f} KB/token ({kv_type}): 4k ctx = {at_4k}、32k ctx = {at_32k}。",
+    "! {size} is in SHARED GPU memory (system RAM over PCIe). "
+    "May include pinned host buffers; under VRAM pressure, fallback can slow inference.":
+        "! {size}が共有RAM（PCIe経由でGPUからアクセスするシステムRAM）にあります。ピン留めされたホストバッファーを含む場合があります。"
+        "VRAMが逼迫すると、フォールバックによって推論が遅くなることがあります。",
+    "Model is mapped but almost nothing is in VRAM: CPU inference, or another GPU.":
+        "モデルはマップされていますが、VRAMにはほとんど載っていません。CPU推論か、別のGPUが考えられます。",
+    "Ollama: {name} {total} total, {pct:.0f}% on GPU, ctx {ctx}.":
+        "Ollama: {name} 合計{total}、GPU上{pct:.0f}%、ctx {ctx}。",
+    "Ollama (not matched to this runner): {name} {total} total, {pct:.0f}% on GPU, ctx {ctx}.":
+        "Ollama（このランナーとは対応付けられていません）: {name} 合計{total}、GPU上{pct:.0f}%、ctx {ctx}。",
+    "LM Studio: {name} {type} {quant} ctx {ctx}.": "LM Studio: {name} {type} {quant} ctx {ctx}。",
+}
+_PROCINFO = {
+    "likely {kind} (name)": "{kind}の可能性（名前から）",
+    "confirmed ({how})": "確認済み ({how})",
+    "installed, not proven loaded": "インストール済み、ロードは未確認",
+    "in use (mapped)": "使用中（マップ済み）",
+    "launch arg": "起動引数",
+    "reported (api)": "ランタイム報告 (api)",
+    "decision model": "意思決定モデル",
+    "embedding model": "埋め込みモデル",
+    "reranker": "リランカー",
+    "speech model": "音声モデル",
+    "vision projector": "ビジョンプロジェクター",
+    "LoRA adapter": "LoRAアダプター",
+}
+_STATUS = {
+    "{proc} is not readable": "{proc}を読み取れません",
+    "scan budget reached, {count} processes not rescanned this refresh (last known GPU fds kept)":
+        "スキャン予算に達したため、{count}個のプロセスは今回の更新で再スキャンしていません（最後に判明したGPU fdを保持）",
+    "{count} processes not inspectable (other users' or kernel threads; sudo includes them)":
+        "{count}個のプロセスは検査できません（他のユーザーのプロセスまたはカーネルスレッド。sudoを使うと含まれます）",
+    "{count} processes whose fds or fdinfo couldn't all be read":
+        "{count}個のプロセスでfdまたはfdinfoをすべては読み取れませんでした",
+    "; ": "。",
+    "{count} Linux GPU process(es) without a VM context to match "
+    "(one may not have created its GPU context yet)":
+        "VMコンテキストと対応付けられないLinux GPUプロセスが{count}個あります"
+        "（GPUコンテキストをまだ作成していない可能性があります）",
+    "loaded": "ロード済み",
+    "streaming started": "ストリーミング開始",
+    "preview": "プレビュー",
+    "unloaded": "アンロード済み",
+    "unloading": "アンロード中",
+}
+
+MESSAGES: dict[str, str] = {**_UI, **_INSPECTOR, **_KINDS, **_EXPLAIN, **_HELP, **_REPORT, **_CLI, **_DIFF,
+                            **_COLLECTOR, **_LLM, **_PROCINFO, **_STATUS}
