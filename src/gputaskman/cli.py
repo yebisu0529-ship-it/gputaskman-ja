@@ -7,6 +7,11 @@ import math
 import sys
 import time
 
+from .i18n import current_language, set_language
+
+LANG_HELP = ("display language (default auto: GPUTASKMAN_LANG, then the locale, then the Windows display language); "
+             "--json always prints English")
+
 
 def diff_main(argv: list[str]) -> None:
     import json
@@ -16,7 +21,9 @@ def diff_main(argv: list[str]) -> None:
     ap.add_argument("before", help="earlier --json snapshot")
     ap.add_argument("after", help="later --json snapshot")
     ap.add_argument("--json", action="store_true", help="print the comparison as JSON")
+    ap.add_argument("--lang", choices=("auto", "en", "ja"), default="auto", help=LANG_HELP)
     args = ap.parse_args(argv)
+    set_language("en" if args.json else args.lang)
 
     from .diff import diff, load, to_text
 
@@ -28,6 +35,15 @@ def diff_main(argv: list[str]) -> None:
 
 
 def main() -> None:
+    """Run the command line. The language it selects does not outlive the call, so in-process callers see no change."""
+    previous = current_language()
+    try:
+        _run()
+    finally:
+        set_language(previous)
+
+
+def _run() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "diff":
         return diff_main(sys.argv[2:])
     ap = argparse.ArgumentParser(prog="gputaskman", description="What's inside your GPU: per-process VRAM, engines, and LLM weights/KV-cache breakdown.",
@@ -39,7 +55,9 @@ def main() -> None:
     ap.add_argument("--no-host", action="store_true",
                     help="WSL: don't read Windows host GPU counters through interop (WSL VM total, Windows apps)")
     ap.add_argument("-i", "--interval", type=float, default=1.0, help="refresh seconds (default 1)")
+    ap.add_argument("--lang", choices=("auto", "en", "ja"), default="auto", help=LANG_HELP)
     args = ap.parse_args()
+    set_language("en" if args.json else args.lang)
     if args.gpu is not None and args.gpu < 0:
         ap.error("--gpu must be a non-negative index")
     if not math.isfinite(args.interval) or args.interval <= 0:
