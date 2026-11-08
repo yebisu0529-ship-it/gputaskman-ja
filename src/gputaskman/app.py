@@ -5,19 +5,21 @@ from __future__ import annotations
 import os
 from collections import deque
 from contextlib import ExitStack
+from dataclasses import replace
 
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import ActiveBinding, Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Markdown, Select, Static
 from textual.worker import get_current_worker
 
 from .collector import BACKEND, Collector, ProcRow, Snapshot, enumerate_adapters, ordered_adapters
+from .i18n import _, fit
 from .llm import gb
 from .nvml import NvDevice, format_metric
 from .report import (DRM_RESIDENT_NOTE, METAL_NOTE, WSL_EMPTY, drm_note, has_engine_counters, has_spill_counters, has_wddm_counters,
@@ -32,6 +34,8 @@ KIND_STYLE = {
 }
 SEG_STYLE = {"weights": "magenta", "kv": "dark_orange", "compute": "yellow", "runtime": "grey58", "unknown": "grey42"}
 SPARK = "▁▂▃▄▅▆▇█"
+COLUMNS = ("PID", "Process", "Kind", "Runtime", "VRAM", "Spill", "Paged", "GPU%", "3D", "Copy", "Video", "What's inside")
+MODEL_COLUMNS = ("", "model", "arch", "params", "quant", "layers", "train ctx", "on GPU (est)", "evidence", "file")
 
 EXPLAIN = {
     "wsl-vm": "The WSL virtual machine as Windows sees it. Windows charges all GPU memory used by Linux processes "
@@ -149,7 +153,25 @@ def stacked_bar(parts: list[tuple[float, str]], total: float, width: int) -> Tex
     return t
 
 
-class HelpScreen(ModalScreen):
+def help_markdown() -> str:
+    """HELP_MD translated one paragraph at a time, so a paragraph edited upstream falls back to English alone."""
+    return "\n\n".join(_(paragraph) for paragraph in HELP_MD.strip().split("\n\n")) + "\n"
+
+
+class TranslatedBindings:
+    """The Footer and the key panel both read Screen.active_bindings, so translating it there covers them."""
+
+    @property
+    def active_bindings(self) -> dict[str, ActiveBinding]:
+        return {key: active._replace(binding=replace(active.binding, description=_(active.binding.description)))
+                for key, active in super().active_bindings.items()}
+
+
+class MainScreen(TranslatedBindings, Screen):
+    pass
+
+
+class HelpScreen(TranslatedBindings, ModalScreen):
     BINDINGS = [Binding("escape,q,question_mark", "app.pop_screen", "Close")]
     DEFAULT_CSS = """
     HelpScreen { align: center middle; }
@@ -158,7 +180,7 @@ class HelpScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
-            yield Markdown(HELP_MD)
+            yield Markdown(help_markdown())
 
 
 METAL_CHARTS = ("GPU", "VRAM")
@@ -239,17 +261,20 @@ class GpuTaskManager(App):
     def selected_pid(self, pid: int | None) -> None:
         self.selected_key = None if pid is None else str(pid)
 
+    def get_default_screen(self) -> Screen:
+        return MainScreen(id="_default")
+
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="dashboard"):
-            yield Static("Sampling GPU counters...", id="device")
+            yield Static(_("Sampling GPU counters..."), id="device")
             with Vertical(id="history"):
                 with Horizontal(id="chart-controls"):
-                    yield Static("Charts", id="chart-label")
+                    yield Static(_("Charts"), id="chart-label")
                     yield Select(
-                        [("All charts", -1), *((self.CHARTS[index], index) for index in self.available_charts)],
+                        [(_("All charts"), -1), *((_(self.CHARTS[index]), index) for index in self.available_charts)],
                         value=-1, allow_blank=False, compact=True, id="chart-mode",
                     )
-                    yield Static("Click to choose · c cycles", id="chart-hint")
+                    yield Static(_("Click to choose · c cycles"), id="chart-hint")
                 yield Static(id="charts")
                 yield Static(id="chart-note")
         table = DataTable(id="procs", cursor_type="row", zebra_stripes=True)
@@ -259,8 +284,8 @@ class GpuTaskManager(App):
 
     def on_mount(self) -> None:
         t = self.query_one("#procs", DataTable)
-        for col in ("PID", "Process", "Kind", "Runtime", "VRAM", "Spill", "Paged", "GPU%", "3D", "Copy", "Video", "What's inside"):
-            t.add_column(col, key=col)
+        for col in COLUMNS:
+            t.add_column(_(col), key=col)
         t.focus()
         self.poll()
 
@@ -298,7 +323,7 @@ class GpuTaskManager(App):
         multi = len(snapshots) > 1
         table = self.query_one("#procs", DataTable)
         if multi and "GPU" not in table.columns:
-            table.add_column("GPU", key="GPU")
+            table.add_column(_("GPU"), key="GPU")
         elif not multi and "GPU" in table.columns:
             table.remove_column("GPU")
         self._row_snapshots = {}
@@ -348,13 +373,13 @@ class GpuTaskManager(App):
 
     def render_dashboard(self) -> None:
         amd = bool(self.snapshots[0].adapter and self.snapshots[0].adapter.vendor_id == 0x1002)
-        clock_label = "SM/GFX clock" if len(self.snapshots) > 1 else "GFX clock" if amd else "SM clock"
+        clock_label = _("SM/GFX clock") if len(self.snapshots) > 1 else _("GFX clock") if amd else _("SM clock")
         if getattr(self, "_clock_label", None) != clock_label:
             self._clock_label = clock_label
             selector = self.query_one("#chart-mode", Select)
             selected = selector.value
-            selector.set_options([("All charts", -1), *(
-                (clock_label if self.CHARTS[index] == "SM clock" else self.CHARTS[index], index)
+            selector.set_options([(_("All charts"), -1), *(
+                (clock_label if self.CHARTS[index] == "SM clock" else _(self.CHARTS[index]), index)
                 for index in self.available_charts)])
             selector.value = selected
         self._amd_chart_labels = amd
@@ -371,13 +396,14 @@ class GpuTaskManager(App):
         nv = s.nv
         name = s.adapter.name if s.adapter else (nv.name if nv else "GPU")
         if s.backend == "metal":
-            head = Text.assemble((name, "bold"), f"   {s.driver}  ", ("Metal", "bold yellow"), "  unified memory")
+            head = Text.assemble((name, "bold"), f"   {s.driver}  ", ("Metal", "bold yellow"), "  " + _("unified memory"))
         else:
-            info = (f"   driver {s.driver}" if s.driver else "") + (f"  CUDA {s.cuda}" if s.cuda else "")
+            info = (("   " + _("driver {version}").format(version=s.driver)) if s.driver else "") + (
+                f"  CUDA {s.cuda}" if s.cuda else "")
             head = Text.assemble((name, "bold"), info + "  ",
                                  (nv.driver_model if nv else "", "bold yellow"), f"  {nv.pci_bus if nv else ''}")
         if self.paused:
-            head.append("   [PAUSED]", style="bold red")
+            head.append("   " + _("[PAUSED]"), style="bold red")
 
         # Fit category proportions to the adapter total; row samples need not sum exactly.
         by_kind: dict[str, float] = {}
@@ -391,31 +417,31 @@ class GpuTaskManager(App):
         other = max(s.vram_used - attributed * scale, 0) if s.vram_used is not None else 0
         parts.append((other, "grey35"))
         width = max(min(self.size.width - 40, 90), 20)
-        vram = Text("GPU mem " if s.backend == "metal" else "VRAM ")
+        vram = Text((_("GPU mem") + " ") if s.backend == "metal" else "VRAM ")
         vram.append_text(stacked_bar(parts, s.vram_total, width))
         used_label = gb(s.vram_used) if s.vram_used is not None else "N/A"
         vram.append(f" {used_label} / {gb(s.vram_total)}", style="bold")
         legend = Text("     ")
         for k, v in order[:7]:
             legend.append("■ ", style=KIND_STYLE.get(k, "white"))
-            legend.append(f"{k} {gb(v)}  ")
+            legend.append(f"{_(k)} {gb(v)}  ")
         if other > 32 << 20:
             legend.append("■ ", style="grey35")
-            legend.append(f"unattributed {gb(other)}  ")
+            legend.append(_("unattributed {size}").format(size=gb(other)) + "  ")
         if s.vram_used is not None:
-            legend.append(f"free {gb(max(s.vram_total - s.vram_used, 0))}", style="grey62")
+            legend.append(_("free {size}").format(size=gb(max(s.vram_total - s.vram_used, 0))), style="grey62")
         if s.shared_used is not None and s.shared_used > 64 << 20:
-            legend.append(f"   shared(RAM) {gb(s.shared_used)}", style="yellow")
+            legend.append("   " + _("shared(RAM) {size}").format(size=gb(s.shared_used)), style="yellow")
         if scale < 1.0:
-            legend.append("   [bar normalized; labels are raw]", style="grey62")
+            legend.append("   " + _("[bar normalized; labels are raw]"), style="grey62")
         if s.backend == "wsl":
             legend.append("\n     " + wsl_note(s), style="grey62")
         if s.backend == "metal":
-            legend.append("\n     " + METAL_NOTE, style="grey62")
+            legend.append("\n     " + _(METAL_NOTE), style="grey62")
         if s.counter_status:
             legend.append("\n     " + s.counter_status, style="grey62")
         if s.process_status:
-            legend.append(f"\n     DRM process scan: {s.process_status}.", style="grey62")
+            legend.append("\n     " + _("DRM process scan: {status}.").format(status=s.process_status), style="grey62")
 
         lines = [head, vram, legend]
         if nv and s.backend == "metal":
@@ -428,7 +454,7 @@ class GpuTaskManager(App):
             m = Text()
             label = "AMD gfx" if nv.source.startswith("AMD ") else "GPU"
             m.append(f"{label} {format_metric(nv.util_gpu, unit='%')}", style=f"bold {self.CHART_COLORS['GPU']}")
-            m.append(f"  Mem activity {format_metric(nv.util_mem, unit='%')}", style=self.CHART_COLORS["Mem activity"])
+            m.append(f"  {_('Mem activity')} {format_metric(nv.util_mem, unit='%')}", style=self.CHART_COLORS["Mem activity"])
             m.append(f"  PCIe↓{format_metric(rx, '.0f'):>5} ↑{format_metric(tx, '.0f'):>4} MB/s")
             if nv.enc or nv.dec:
                 m.append(f"  enc {format_metric(nv.enc, unit='%')} dec {format_metric(nv.dec, unit='%')}")
@@ -443,7 +469,7 @@ class GpuTaskManager(App):
                       f"PCIe gen{format_metric(nv.pcie_gen)} x{format_metric(nv.pcie_width)}  "
                       + (f"CC {nv.compute_cap or 'N/A'}" if nv.source == "NVML" else nv.source), style="grey70")
             if nv.throttle:
-                st.append("  throttle: " + ",".join(nv.throttle), style="yellow")
+                st.append("  " + _("throttle: {reasons}").format(reasons=",".join(nv.throttle)), style="yellow")
             lines.append(st)
         return Group(*lines)
 
@@ -499,7 +525,7 @@ class GpuTaskManager(App):
         columns = min(len(indices), 3, max(1, (width + 2) // 46))
         cell_width = max(1, (width - 2 * (columns - 1)) // columns)
         grid = Table.grid(padding=(0, 2), pad_edge=False, expand=True)
-        for _ in range(columns):
+        for _column in range(columns):
             grid.add_column(width=cell_width, no_wrap=True, overflow="crop")
         cells = []
         for index in indices:
@@ -508,18 +534,19 @@ class GpuTaskManager(App):
             name = self.CHARTS[index]
             if getattr(self, "_amd_chart_labels", False) and name == "SM clock":
                 name = "GFX clock"
-            cell = Text(f"{name:<12} ", style=style)
+            cell = Text(fit(_(name), 12) + " ", style=style)
             cell.append(f"{format_metric(current, '.0f', unit):>8} ", style="bold")
             cell.append(spark(values, max(1, cell_width - 22), scale))
             cells.append(cell)
         for start in range(0, len(cells), columns):
             grid.add_row(*cells[start:start + columns])
-        _, power_scale, _, _ = self.chart_series(self.CHARTS.index("Power"), self.snap.nv)
-        _, clock_scale, _, _ = self.chart_series(self.CHARTS.index("SM clock"), self.snap.nv)
+        power_scale = self.chart_series(self.CHARTS.index("Power"), self.snap.nv)[1]
+        clock_scale = self.chart_series(self.CHARTS.index("SM clock"), self.snap.nv)[1]
         note = (
-            "Recent samples · blank = no reading" if self.snap.backend == "metal" else
-            f"Recent samples · blank = no reading · power 0–{power_scale:.0f} W · "
-            f"{'GFX' if getattr(self, '_amd_chart_labels', False) else 'SM'} clock 0–{clock_scale:.0f} MHz"
+            _("Recent samples · blank = no reading") if self.snap.backend == "metal" else
+            _("Recent samples · blank = no reading · power 0–{power_scale:.0f} W · {clock} clock 0–{clock_scale:.0f} MHz")
+            .format(power_scale=power_scale, clock_scale=clock_scale,
+                    clock="GFX" if getattr(self, "_amd_chart_labels", False) else "SM")
         )
         return grid, note
 
@@ -575,7 +602,7 @@ class GpuTaskManager(App):
             t.add_row(
                 Text(r.pid_label, justify="right", style="grey62" if r.host else ""),
                 Text(r.name),
-                Text(r.kind, style=KIND_STYLE.get(r.kind, "")),
+                Text(_(r.kind), style=KIND_STYLE.get(r.kind, "")),
                 Text(" ".join(r.detail.runtimes[:3]), style="grey70"),
                 Text(vram_label(r.gpu), justify="right", style="bold" if r.gpu.attributed else "grey62"), spill, paged,
                 pct(r.gpu.gpu_pct if engines else None),
@@ -592,32 +619,34 @@ class GpuTaskManager(App):
                 t.move_cursor(row=t.get_row_index(keep), animate=False, scroll=False)
             except Exception:
                 pass
-        t.border_subtitle = f"sort: {self.SORTS[self.sort_idx][0]}  ·  {'all' if self.show_all else 'top'} processes"
+        t.border_subtitle = (_("sort: {sort}  ·  all processes") if self.show_all
+                             else _("sort: {sort}  ·  top processes")).format(sort=_(self.SORTS[self.sort_idx][0]))
         if s.backend == "wsl" and not any(not r.host for r in s.procs):
-            t.border_subtitle = WSL_EMPTY
+            t.border_subtitle = _(WSL_EMPTY)
 
     def render_inspector(self) -> None:
         panel = self.query_one("#inspector", Static)
         s = self._row_snapshots.get(self.selected_key, self.snap)
         r = next((x for x in s.procs if x.key == self.selected_key), None) if s else None
         if r is None:
-            panel.update(Text("Select a process (↑/↓) to see what's inside its GPU memory.  Press ? to learn what's knowable.", style="grey62"))
+            panel.update(Text(_("Select a process (↑/↓) to see what's inside its GPU memory.  Press ? to learn what's knowable."),
+                              style="grey62"))
             return
-        where = {"windows": "Windows PID ", "outside": "host PID "}.get(r.origin, "") if r.host else ""
-        panel.border_title = f"{r.name} ({where}{r.pid}) - {r.kind}"
+        where = {"windows": "Windows PID", "outside": _("host PID")}.get(r.origin, "") if r.host else ""
+        panel.border_title = f"{r.name} ({where + ' ' if where else ''}{r.pid}) - {_(r.kind)}"
         if r.gpu_index is not None:
-            panel.border_title += " - GPU unknown" if s.backend == "wsl" and not r.host else f" - GPU {r.gpu_index}"
+            panel.border_title += (" - " + _("GPU unknown")) if s.backend == "wsl" and not r.host else f" - GPU {r.gpu_index}"
         out: list = []
         e = r.gpu.engines
         wddm = has_wddm_counters(s, r)
-        engines = " ".join(f"{k} {v:.0f}%" for k, v in e.items() if v >= 0.5) or "idle"
-        hdr = Text.assemble(("VRAM ", "bold"), (vram_label(r.gpu), "bold"), "   spill(RAM) ",
+        engines = " ".join(f"{k} {v:.0f}%" for k, v in e.items() if v >= 0.5) or _("idle")
+        hdr = Text.assemble(("VRAM ", "bold"), (vram_label(r.gpu), "bold"), "   " + _("spill(RAM)") + " ",
                             (gb(r.gpu.shared) if has_spill_counters(s, r) else "n/a",
                              "bold red" if r.gpu.shared > 256 << 20 and s.shared_is_spill else ""),
-                            "   paged(est) ", gb(r.gpu.paged_out) if wddm and r.gpu.paged_available else "n/a",
-                            "   engines ", engines if has_engine_counters(s, r) else "n/a")
+                            "   " + _("paged(est)") + " ", gb(r.gpu.paged_out) if wddm and r.gpu.paged_available else "n/a",
+                            "   " + _("engines") + " ", engines if has_engine_counters(s, r) else "n/a")
         if r.detail.runtimes:
-            hdr.append("   runtime ", style="grey62")
+            hdr.append("   " + _("runtime") + " ", style="grey62")
             hdr.append(" ".join(r.detail.runtimes), style="cyan")
         out.append(hdr)
         if not r.host and r.gpu.attributed and r.gpu.inferred_by:
@@ -626,38 +655,42 @@ class GpuTaskManager(App):
             if r.gpu.inferred is not None:
                 out.append(Text(inferred_note(r.gpu), style="grey62"))
             elif s.wsl_split:
-                out.append(Text(f"No per-process VRAM: {s.wsl_split}.", style="grey62"))
+                out.append(Text(_("No per-process VRAM: {reason}.").format(reason=s.wsl_split), style="grey62"))
             elif s.backend == "drm":
                 out.append(Text(drm_note(r.gpu), style="grey62"))
             elif s.backend == "metal":
-                out.append(Text("GPU memory n/a: footprint can't read other users' processes without root "
-                                "(or hasn't measured this one yet). GPU% comes from Metal's per-process GPU time.",
+                out.append(Text(_("GPU memory n/a: footprint can't read other users' processes without root "
+                                  "(or hasn't measured this one yet). GPU% comes from Metal's per-process GPU time."),
                                 style="grey62"))
         if s.backend == "drm" and not r.host and (r.gpu.resident_vram is not None or r.gpu.resident_gtt is not None):
             def size(v): return gb(v) if v is not None else "n/a"
-            out.append(Text(f"Resident VRAM {size(r.gpu.resident_vram)}, GTT {size(r.gpu.resident_gtt)}. "
-                            + DRM_RESIDENT_NOTE, style="grey62"))
+            out.append(Text(_("Resident VRAM {vram}, GTT {gtt}. {note}").format(
+                vram=size(r.gpu.resident_vram), gtt=size(r.gpu.resident_gtt), note=_(DRM_RESIDENT_NOTE)), style="grey62"))
         if s.backend == "drm" and r.gpu.kfd:
-            out.append(Text("Engines n/a: this process uses ROCm/HIP (/dev/kfd), whose compute queues the kernel doesn't "
-                            "time per process. The device's AMD gfx load includes its work.", style="grey62"))
+            out.append(Text(_("Engines n/a: this process uses ROCm/HIP (/dev/kfd), whose compute queues the kernel doesn't "
+                              "time per process. The device's AMD gfx load includes its work."), style="grey62"))
         if wddm and r.gpu.paged_out >= 64 << 20:
-            out.append(Text(f"{gb(r.gpu.paged_out)} of {gb(r.gpu.committed)} committed is not accounted for by local/non-local "
-                            "usage. Estimated non-residency, not proof of eviction or disk paging.",
+            out.append(Text(_("{paged} of {committed} committed is not accounted for by local/non-local "
+                              "usage. Estimated non-residency, not proof of eviction or disk paging.").format(
+                                  paged=gb(r.gpu.paged_out), committed=gb(r.gpu.committed)),
                             style="yellow"))
 
         if r.handy:
             if r.handy.selected_model:
-                out.append(Text(f"Handy selected (settings; not load proof): {r.handy.selected_model}", style="grey70"))
+                out.append(Text(_("Handy selected (settings; not load proof): {model}").format(
+                    model=r.handy.selected_model), style="grey70"))
             if r.handy.last_event:
-                out.append(Text(f"Handy last event: {r.handy.last_event} {r.handy.last_model or ''} "
-                                f"at {r.handy.last_event_local} (runtime-reported history, not current GPU residency)",
+                out.append(Text(_("Handy last event: {event} {model} at {time} "
+                                  "(runtime-reported history, not current GPU residency)").format(
+                                      event=r.handy.last_event, model=r.handy.last_model or "",
+                                      time=r.handy.last_event_local),
                                 style="green"))
 
         v = r.llm
         if v:
             if r.gpu_index is not None:
-                out.append(Text("Model files, launch flags and runtime buffer logs can span GPUs. "
-                                "The breakdown below is not a measured per-device model placement.", style="grey70"))
+                out.append(Text(_("Model files, launch flags and runtime buffer logs can span GPUs. "
+                                  "The breakdown below is not a measured per-device model placement."), style="grey70"))
             width = max(min(self.size.width - 8, 100), 20)
             total = max(r.gpu.shown_vram or 0, sum(x.bytes for x in v.segments), 1)
             out.append(stacked_bar([(x.bytes, SEG_STYLE[x.kind]) for x in v.segments], total, width))
@@ -667,12 +700,12 @@ class GpuTaskManager(App):
                 legend.append(f"{x.label} {gb(x.bytes)}", style="bold" if x.exact else "")
                 legend.append("  ")
             if v.log_source:
-                legend.append(f"(allocated sizes from {os.path.basename(v.log_source)})", style="green")
+                legend.append(_("(allocated sizes from {log})").format(log=os.path.basename(v.log_source)), style="green")
             out.append(legend)
             if v.models:
                 mt = Table(box=None, padding=(0, 1), show_edge=False, header_style="bold grey70")
-                for col in ("", "model", "arch", "params", "quant", "layers", "train ctx", "on GPU (est)", "evidence", "file"):
-                    mt.add_column(col)
+                for col in MODEL_COLUMNS:
+                    mt.add_column(_(col))
                 for i, g in enumerate(v.models):
                     f = v.files[i] if i < len(v.files) else None
                     mt.add_row(Text(v.kind_label(i), style="magenta"), v.label(i), g.arch, g.params_label, g.quant,
@@ -681,42 +714,46 @@ class GpuTaskManager(App):
                                Text(os.path.basename(g.path), style="grey50", overflow="ellipsis"))
                 out.append(mt)
             for f in v.other_files:
-                kind = f", {f.kind_label}" if f.kind_label else ""
-                out.append(Text(f"file: {f.store_name or f.path}  ({gb(f.size)}, {f.evidence}{kind})", style="grey62"))
+                kind = _(", {kind}").format(kind=f.kind_label) if f.kind_label else ""
+                out.append(Text(_("file: {name}  ({size}, {evidence}{kind})").format(
+                    name=f.store_name or f.path, size=gb(f.size), evidence=f.evidence, kind=kind), style="grey62"))
             if v.server:
                 sv = v.server
-                st = Text.assemble(("server ", "bold"), (f"{sv.kind} {sv.url}", "cyan"))
+                st = Text.assemble((_("server") + " ", "bold"), (f"{sv.kind} {sv.url}", "cyan"))
                 if sv.n_ctx:
                     st.append(f"  ctx {sv.n_ctx:,}")
                 if sv.slots_total is not None:
-                    st.append(f"  slots busy {sv.slots_busy}/{sv.slots_total}")
+                    st.append("  " + _("slots busy {busy}/{total}").format(busy=sv.slots_busy, total=sv.slots_total))
                 if sv.gen_tok_s:
-                    st.append(f"  gen {sv.gen_tok_s:.1f} tok/s", style="bold green")
+                    st.append("  " + _("gen {rate:.1f} tok/s").format(rate=sv.gen_tok_s), style="bold green")
                 if sv.prompt_tok_s:
-                    st.append(f"  prompt {sv.prompt_tok_s:.0f} tok/s")
+                    st.append("  " + _("prompt {rate:.0f} tok/s").format(rate=sv.prompt_tok_s))
                 for m in sv.models[:4]:
                     if sv.kind == "lmstudio":
-                        st.append(f"\n  loaded: {m['name']} {m.get('type') or ''} {m.get('quant') or ''} ctx {m.get('ctx') or '?'}")
+                        st.append("\n  " + _("loaded: {name} {type} {quant} ctx {ctx}").format(
+                            name=m["name"], type=m.get("type") or "", quant=m.get("quant") or "", ctx=m.get("ctx") or "?"))
                 out.append(st)
             for n in v.notes:
                 out.append(Text("• " + n, style="bold red" if n.startswith("!") else "grey70"))
         else:
-            out.append(Text(EXPLAIN.get(r.kind, ""), style="grey70"))
+            out.append(Text(_(EXPLAIN.get(r.kind, "")), style="grey70"))
             for m in r.detail.models:
-                kind = f", {m.kind_label}" if m.kind_label else ""
-                out.append(Text(f"file: {m.store_name or m.path}  ({gb(m.size)}, {m.evidence}{kind})", style="magenta"))
+                kind = _(", {kind}").format(kind=m.kind_label) if m.kind_label else ""
+                out.append(Text(_("file: {name}  ({size}, {evidence}{kind})").format(
+                    name=m.store_name or m.path, size=gb(m.size), evidence=m.evidence, kind=kind), style="magenta"))
             if r.detail.candidates:
-                out.append(Text("No mapped model file was observed. Some runtimes read then close model files. "
-                                "Installed candidates (not proven loaded):", style="grey70"))
+                out.append(Text(_("No mapped model file was observed. Some runtimes read then close model files. "
+                                  "Installed candidates (not proven loaded):"), style="grey70"))
                 for m in r.detail.candidates:
-                    kind = f", {m.kind_label}" if m.kind_label else ""
-                    out.append(Text(f"  {m.store_name or m.path}  ({gb(m.size)}{kind})", style="grey62"))
+                    kind = _(", {kind}").format(kind=m.kind_label) if m.kind_label else ""
+                    out.append(Text("  " + _("{name}  ({size}{kind})").format(
+                        name=m.store_name or m.path, size=gb(m.size), kind=kind), style="grey62"))
         if r.detail.ports:
-            out.append(Text("listening: " + ", ".join(map(str, r.detail.ports[:8])), style="grey50"))
+            out.append(Text(_("listening: {ports}").format(ports=", ".join(map(str, r.detail.ports[:8]))), style="grey50"))
         if r.detail.cmdline:
             out.append(Text(" ".join(r.detail.cmdline)[:400], style="grey42", overflow="ellipsis"))
         elif r.detail.access_denied:
-            out.append(Text("(protected process - run elevated for runtime/file details)", style="grey42"))
+            out.append(Text(_("(protected process - run elevated for runtime/file details)"), style="grey42"))
         panel.update(Group(*out))
 
     # ------------------------------------------------------------------ events/actions

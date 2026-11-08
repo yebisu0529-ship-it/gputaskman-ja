@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from gputaskman.app import GpuTaskManager
 from gputaskman.collector import Collector, Snapshot
+from gputaskman.i18n import set_language
 
 
 def for_publication(snapshot: Snapshot) -> Snapshot:
@@ -83,7 +84,9 @@ async def capture(snapshots: list[Snapshot], output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("docs") / "screenshots")
+    parser.add_argument("--lang", choices=("auto", "en", "ja"), default="en", help="language of the captured screens")
     args = parser.parse_args()
+    set_language(args.lang)
     collector = Collector()
     try:
         snapshots = []
