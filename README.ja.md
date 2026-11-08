@@ -1,7 +1,9 @@
 # gputaskman 日本語版（非公式）
 
 [shanselman/gputaskman](https://github.com/shanselman/gputaskman)（v0.3.3）の画面表示を日本語にした、非公式のローカライズです。
+
 ライセンスは元のプロジェクトと同じMITで、著作権表示（Copyright (c) 2026 Scott Hanselman）は[LICENSE](LICENSE)にそのまま残しています。
+
 変えたのは表示する文言だけで、収集の仕組みと数値の扱いは元のままです。機能や仕組みの説明は、元の[README.md](README.md)（英語）を参照してください。
 
 ## インストール
@@ -13,6 +15,7 @@ uv tool install git+https://github.com/yebisu0529-ship-it/gputaskman-ja@i18n-ja
 ```
 
 英語版と日本語版はパッケージ名が同じ`gputaskman`なので、同時には入れられません。英語版を入れている場合は、先に`uv tool uninstall gputaskman`を実行します。
+
 インストールせずに1回だけ試すときは、`uvx --from git+https://github.com/yebisu0529-ship-it/gputaskman-ja@i18n-ja gputaskman`を実行します。
 
 ## 使い方
@@ -52,6 +55,7 @@ setx GPUTASKMAN_LANG ja
 ```
 
 `--json`と`diff --json`は、`--lang`や`GPUTASKMAN_LANG`にかかわらず英語で出力します。スクリプトや他のツールが読む形式を変えないためです。
+
 `--once`と`diff`のテキストは日本語になります。
 
 ## 既知の制限
