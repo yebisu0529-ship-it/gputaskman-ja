@@ -1,6 +1,6 @@
 # gputaskman
 
-> **非公式の日本語版です。** [shanselman/gputaskman](https://github.com/shanselman/gputaskman) の画面表示を日本語にしたフォークで、元のプロジェクトとは関係ありません。使い方と制限は [README.ja.md](README.ja.md) にあります。以下は元のREADME（英語）です。
+> **非公式の日本語版です。** [shanselman/gputaskman](https://github.com/shanselman/gputaskman) の画面表示を日本語にしたフォークで、元のプロジェクトとは関係ありません。PyPIの `gputaskman` は元の英語版です。日本語版の入れ方、使い方、制限は [README.ja.md](README.ja.md) にあります。以下は元のREADME（英語）です。
 >
 > Unofficial Japanese localization of [shanselman/gputaskman](https://github.com/shanselman/gputaskman), not affiliated with the original project.
 

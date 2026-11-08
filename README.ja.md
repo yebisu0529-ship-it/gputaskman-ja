@@ -4,19 +4,34 @@
 ライセンスは元のプロジェクトと同じMITで、著作権表示（Copyright (c) 2026 Scott Hanselman）は[LICENSE](LICENSE)にそのまま残しています。
 変えたのは表示する文言だけで、収集の仕組みと数値の扱いは元のままです。機能や仕組みの説明は、元の[README.md](README.md)（英語）を参照してください。
 
-## 実行方法
+## インストール
 
-Python 3.11以上と[uv](https://docs.astral.sh/uv/)が必要です。リポジトリを取得して、そのフォルダーで実行します。
+[uv](https://docs.astral.sh/uv/)が必要です。PyPIの`gputaskman`は元の英語版なので、日本語版はこのリポジトリから入れます。
+
+```powershell
+uv tool install git+https://github.com/yebisu0529-ship-it/gputaskman-ja@i18n-ja
+```
+
+英語版と日本語版はパッケージ名が同じ`gputaskman`なので、同時には入れられません。英語版を入れている場合は、先に`uv tool uninstall gputaskman`を実行します。
+インストールせずに1回だけ試すときは、`uvx --from git+https://github.com/yebisu0529-ship-it/gputaskman-ja@i18n-ja gputaskman`を実行します。
+
+## 使い方
+
+```powershell
+gputaskman                  # TUI
+gputaskman --once           # テキストで1回だけ出力
+gputaskman --json           # JSON を1回だけ出力（常に英語）
+gputaskman diff before.json after.json   # 2つの --json を比較
+gputaskman --lang en        # 英語で表示
+```
+
+ソースから動かすときは、リポジトリを取得して`uv run`を使います。Python 3.11以上が必要です。
 
 ```powershell
 git clone https://github.com/yebisu0529-ship-it/gputaskman-ja.git
 cd gputaskman-ja
 uv sync --locked
-uv run --locked gputaskman                  # TUI
-uv run --locked gputaskman --once           # テキストで1回だけ出力
-uv run --locked gputaskman --json           # JSON を1回だけ出力（常に英語）
-uv run --locked gputaskman diff before.json after.json   # 2つの --json を比較
-uv run --locked gputaskman --lang en        # 英語で表示
+uv run --locked gputaskman
 ```
 
 TUIのキーは元のままです。`↑/↓`で選択、`s`で並べ替え、`c`でグラフ、`a`ですべて/上位、`p`で一時停止、`?`で説明、`q`で終了します。
