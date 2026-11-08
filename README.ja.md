@@ -17,7 +17,7 @@ uv run --locked gputaskman diff before.json after.json   # 2つの --json を比
 uv run --locked gputaskman --lang en        # 英語で表示
 ```
 
-TUIのキーは元のままです。`↑/↓`で選択、`s`で並べ替え、`c`でグラフ、`a`で全部/上位、`p`で一時停止、`?`で説明、`q`で終了します。
+TUIのキーは元のままです。`↑/↓`で選択、`s`で並べ替え、`c`でグラフ、`a`ですべて/上位、`p`で一時停止、`?`で説明、`q`で終了します。
 
 ## 表示言語
 
@@ -43,7 +43,8 @@ setx GPUTASKMAN_LANG ja
 - `--help`の説明、argparseの`usage:`や`options:`、Textual組み込みのコマンドパレット（Ctrl+P）の中身は、英語のままです。
 - 曖昧幅の文字（バーの`█` `░`や`■`など）を全角で描く端末では、バーの位置がずれます。元のプロジェクトと同じ制限です。
 - `--once`をファイルやパイプに出すと、日本語Windowsではcp932で書き出されます。訳文はcp932で表せる文字だけを使っています。UTF-8で受け取るときは、`PYTHONUTF8=1`を設定します。
-- ヘルプ画面（`?`）の表は、約110桁より狭い端末では、セルの末尾が「…」で切れることがあります。全文はセルにマウスを置くと表示されます。
+- ヘルプ画面（`?`）の表は、120桁より狭い端末では、セルの末尾が「…」で切れることがあります。全文はセルにマウスを置くと表示されます。
+- インスペクターの長い説明文は空白の位置でしか折り返されないため、「5.73 GB」の数値と単位の間など、区切りの悪い位置で改行されることがあります。表示に使っているRichの折り返しの仕様です。
 - プロセス名、ランタイム名、エンジン名（3d、compute、copy、videoなど）、OllamaやLM Studioが返すモデル名、ログの内容は、そのまま表示します。
 
 ## 用語
@@ -56,10 +57,10 @@ setx GPUTASKMAN_LANG ja
 | inferred | 推測 | 実測値と状況から導いた値。`*`は成り立つ説明が1つだけの場合、`?`は順序などによる推測 |
 | estimated, est. | 推定 | モデルのヘッダーや起動引数などから計算した値 |
 | runtime-reported | ランタイム報告 | llama.cppなどのログやAPIが報告した値 |
-| heuristic | ヒューリスティック | 名前などからの当て推量。実際の種類や常駐は確認していない |
+| heuristic | ヒューリスティック | ファイル名やフォルダー名からの手がかり。実際の種類や常駐は確認していない |
 | confirmed | 確認済み | `api`か`mapped`を含む2つ以上の根拠がそろった状態 |
 | unproven | 未確認 | 候補はあるが、ロードされているかは確認していない |
-| evidence | 根拠 | モデルをどう特定したか。`api`、`mapped`、`cmdline`、`installed`の順に強い |
+| evidence | 根拠 | モデルをどう特定したか（`api`、`mapped`、`cmdline`、`installed`） |
 | unattributed | 未帰属 | どのプロセスにも割り当てられていない分 |
 | unknown | 不明 | 取得できなかった値。0ではない |
 | Spill | 共有RAM | GPUからアクセスできるシステムRAM。あふれた分とは限らない |
@@ -69,4 +70,4 @@ setx GPUTASKMAN_LANG ja
 
 - 訳文は`src/gputaskman/locale_ja.py`にあります。キーは、ソースにある英語の文字列そのものです。
 - `tests/test_i18n.py`が、訳文の不足、古くなったキー、プレースホルダーの不一致、cp932で表せない文字を検出します。元の英語を編集すると、このテストが該当する文字列を示します。
-- 日本語のWindowsでは、テスト全体を`uv run --locked python -m unittest discover -s tests -q`で実行すると、`tests/test_i18n.py`が`GPUTASKMAN_LANG=en`に固定します。`tests/test_diff.py`だけを単独で実行すると、英語の出力を確認する`test_cli_text_json_and_errors`が日本語の出力で失敗します。その場合は、自分で`GPUTASKMAN_LANG=en`を設定してください。
+- テストは`uv run --locked python -m unittest discover -s tests -q`で実行します。日本語のWindowsでもそのまま通ります。英語の出力を確かめるテストは、自分で`GPUTASKMAN_LANG=en`を指定しています。

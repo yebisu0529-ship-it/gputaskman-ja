@@ -131,6 +131,7 @@ class LoadAndCliTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not a gputaskman --json snapshot"):
             load(self.write("c.json", {"hello": 1}, "utf-8"))
 
+    @patch.dict(os.environ, {"GPUTASKMAN_LANG": "en"})
     def test_cli_text_json_and_errors(self):
         a = self.write("a.json", snap([], used=GiB, attributed=GiB), "utf-8")
         b = self.write("b.json", snap([proc(1, "x", vram=GiB)], used=2 * GiB, attributed=2 * GiB), "utf-8")

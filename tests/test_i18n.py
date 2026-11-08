@@ -41,8 +41,6 @@ from test_diff import llm as llm_view
 from test_diff import proc as diff_proc
 from test_diff import snap as diff_snap
 
-# The suite asserts English output through cli.main(); keep it independent of the machine's display language.
-os.environ["GPUTASKMAN_LANG"] = "en"
 GiB = 1 << 30
 MiB = 1 << 20
 
@@ -311,7 +309,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
     async def test_footer_and_help_screen_bindings_follow_the_language(self):
         expected = {
             "en": (["Quit", "Sort", "Chart", "All/Top", "Pause", "Explain", "palette"], "Close"),
-            "ja": (["終了", "並べ替え", "グラフ", "全部/上位", "一時停止", "説明", "コマンドパレット"], "閉じる"),
+            "ja": (["終了", "並べ替え", "グラフ", "すべて/上位", "一時停止", "説明", "コマンドパレット"], "閉じる"),
         }
         for language, (footer, close) in expected.items():
             with self.subTest(language=language):
@@ -378,7 +376,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
                 app.apply(s)
                 await pilot.pause()
                 charts = self.chart_text(app)
-                for name in ("GPU", "SMクロック", "VRAM", "メモリ稼働", "温度", "電力", "エンコーダー", "デコーダー"):
+                for name in ("GPU", "SMクロック", "VRAM", "メモリ稼働率", "温度", "電力", "エンコーダー", "デコーダー"):
                     self.assertIn(name, charts)
                 for line in charts.splitlines():
                     self.assertRegex(set_cell_size(line, 21)[-8:], r"^ *(\d+(%| MHz| W|°C)|N/A)$")
@@ -388,7 +386,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
                 for label in ("グラフ", "すべてのグラフ", "クリックで選択 ・ cキーで切り替え"):
                     self.assertIn(label, text)
                 device = "\n".join(line.plain for line in app.render_device(s).renderables)
-                for label in ("メモリ稼働 10%", "スロットリング: sw-power-cap", "空き 6.00 GB"):
+                for label in ("メモリ稼働率 10%", "スロットリング: sw-power-cap", "空き 6.00 GB"):
                     self.assertIn(label, device)
                 self.assertNotIn("一時停止中", device)
                 await pilot.press("p")
@@ -423,7 +421,7 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.screen.query_one(Markdown).source, help_markdown())
                 text = self.screen_text(app)
-                self.assertIn("GPUメモリについて何がわかるのか?", text)
+                self.assertIn("GPUメモリについて何がわかるのか？", text)
                 self.assertIn("階層", text)
                 self.assertNotIn("What can be known", text)
 
@@ -460,7 +458,7 @@ class ReportTextTests(unittest.TestCase):
         first, memory = text.splitlines()[:2]
         self.assertEqual(first, "GPU  ドライバー 560.94  CUDA 12.6  WDDM")
         self.assertEqual(memory, "VRAM 10.00 GB / 16.00 GB   共有RAM 1.00 GB")
-        self.assertIn("メモリ稼働 10%", text)
+        self.assertIn("メモリ稼働率 10%", text)
         self.assertNotIn("mem-bandwidth", text)
 
     def test_every_row_keeps_the_vram_column_at_the_headers_cell_offset(self):
@@ -628,7 +626,7 @@ class DataStringTests(unittest.TestCase):
         for language, expected in (
             ("en", ["in use (mapped)", "likely decision model (name)", "installed, not proven loaded", "launch arg",
                     "reported (api)", "confirmed (api+mapped)"]),
-            ("ja", ["使用中（マップ済み）", "意思決定モデルの可能性（名前から）", "インストール済み、ロードは未確認", "起動引数",
+            ("ja", ["使用中（マップ済み）", "判断モデルの可能性（名前から）", "インストール済み、ロードは未確認", "起動引数",
                     "ランタイム報告 (api)", "確認済み (api+mapped)"]),
         ):
             with self.subTest(language=language):
@@ -640,7 +638,7 @@ class DataStringTests(unittest.TestCase):
 
     def test_gguf_kinds_are_translated_where_shown_and_compared_in_english(self):
         set_language("ja")
-        cases = {"LLM": "LLM", "decision model": "意思決定モデル", "embedding model": "埋め込みモデル", "reranker": "リランカー",
+        cases = {"LLM": "LLM", "decision model": "判断モデル", "embedding model": "埋め込みモデル", "reranker": "リランカー",
                  "speech model": "音声モデル", "vision projector": "ビジョンプロジェクター", "LoRA adapter": "LoRAアダプター"}
         for kind, japanese in cases.items():
             with self.subTest(kind=kind):
@@ -684,8 +682,8 @@ class DataStringTests(unittest.TestCase):
             "ja": {
                 "handy last": "Handyの最新ログ（loaded）: model.gguf",
                 "handy selected": "Handyで選択中（ロードの証拠ではありません）: model.gguf",
-                "mapped": "OpenJev.safetensors（意思決定モデルの可能性（名前から））",
-                "installed": "インストール済み（未確認）: OpenJev.safetensors 1.00 GB（意思決定モデルの可能性（名前から））",
+                "mapped": "OpenJev.safetensors（判断モデルの可能性（名前から））",
+                "installed": "インストール済み（未確認）: OpenJev.safetensors 1.00 GB（判断モデルの可能性（名前から））",
                 "compositor": "デスクトップのバックバッファーと合成済みフレーム",
                 "wsl-vm": "LinuxのGPUメモリすべて（全WSLディストリビューションとWSLg）",
                 "external": "別のPID名前空間のプロセス（ホストまたは別のコンテナー）",

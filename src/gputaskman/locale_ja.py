@@ -9,7 +9,7 @@ _UI = {
     "Quit": "終了",
     "Sort": "並べ替え",
     "Chart": "グラフ",
-    "All/Top": "全部/上位",
+    "All/Top": "すべて/上位",
     "Pause": "一時停止",
     "Explain": "説明",
     "Close": "閉じる",
@@ -23,7 +23,7 @@ _UI = {
     "GFX clock": "GFXクロック",
     "SM/GFX clock": "SM/GFXクロック",
     "VRAM": "VRAM",
-    "Mem activity": "メモリ稼働",
+    "Mem activity": "メモリ稼働率",
     "Temperature": "温度",
     "Power": "電力",
     "Encoder": "エンコーダー",
@@ -132,11 +132,11 @@ _INSPECTOR = {
 }
 _KINDS = {
     "LLM": "LLM",
-    "decision": "意思決定",
-    "decision?": "意思決定?",
+    "decision": "判断モデル",
+    "decision?": "判断モデル?",
     "embedding": "埋め込み",
     "speech": "音声",
-    "diffusion": "拡散",
+    "diffusion": "拡散モデル",
     "AI": "AI",
     "compute": "コンピュート",
     "3D/game": "3D/ゲーム",
@@ -193,7 +193,7 @@ _EXPLAIN = {
         "UIのサーフェス: スワップチェーン、ウィンドウのバックバッファー、キャッシュされたビットマップ/グリフ。",
 }
 _HELP = {
-    "# What can be known about GPU memory?": "# GPUメモリについて何がわかるのか?",
+    "# What can be known about GPU memory?": "# GPUメモリについて何がわかるのか？",
     (
         '| Layer | Source | Works for |\n'
         '|---|---|---|\n'
@@ -207,11 +207,11 @@ _HELP = {
     ): (
         '| 階層 | 情報源 | 対象 |\n'
         '|---|---|---|\n'
-        '| **デバイス**のテレメトリ | NVML、AMD ADL、または任意のAMD SMI。Linuxではamdgpuのsysfs | GPUとドライバーによって 利用可否が異なる |\n'
+        '| **デバイス**のテレメトリ | NVML、AMD ADL、またはオプションのAMD SMI。Linuxではamdgpuのsysfs | GPUとドライバーによって 利用可否が異なる |\n'
         '| **プロセスごと**のVRAM、 共有RAMへのスピル、 エンジンごとの負荷 | Windows WDDMカウンター(dxgkrnl)。 LinuxのamdgpuではDRM fdinfo | WDDMまたはDRMから 見えるワークロード |\n'
         '| **どのランタイムか** (CUDA, HIP, Vulkan, D3D12, ggml, ONNX, PyTorch...) | プロセスにマップされているDLL | すべて |\n'
         '| **どのモデルファイルか** | メモリマップされたファイル + コマンドライン | llama.cpp, stable-diffusion.cpp, LM Studio, Ollama |\n'
-        '| **モデル名と種類** （LLM、意思決定、 埋め込み、音声） | GGUFヘッダー、Ollama/LM Studio/Hugging Faceのストア、 ローカルサーバーのAPI | GGUF系 |\n'
+        '| **モデル名と種類** （LLM、判断モデル、 埋め込み、音声） | GGUFヘッダー、Ollama/LM Studio/Hugging Faceのストア、 ローカルサーバーのAPI | GGUF系 |\n'
         '| **重み / KVキャッシュ / 計算バッファー**の内訳 | GGUFヘッダーからの算出、 llama.cpp/Ollamaのログ、 ローカルサーバーのAPI | GGUF/llama.cpp系 |\n'
         '| テクスチャ・バッファーごとの名前 | アプリにデバッガー(PIX, Nsight)をアタッチする必要がある | ゲーム、3Dアプリ |'
     ),
@@ -232,9 +232,9 @@ _HELP = {
         'GGUF kind is missing. It does not confirm the kind, GPU residency, or execution. Installed\n'
         'candidates remain unproven; engine activity is measured per process, not per model.'
     ): (
-        '**ローカルのワークロードのみ:** 推論、意思決定モデル、ビジョン、音声、学習、グラフィックス、ビデオ。'
+        '**ローカルのワークロードのみ:** 推論、判断モデル、ビジョン、音声、学習、グラフィックス、ビデオ。'
         'クラウドでホストされているモデルは、このモニターの対象外です。DLLから特定できるのはランタイムであり、'
-        'モデルやタスクではありません。種類列の「意思決定?」と「意思決定モデルの可能性（名前から）」は、'
+        'モデルやタスクではありません。種類列の「判断モデル?」と「判断モデルの可能性（名前から）」は、'
         '具体的なGGUFの種類がないときに、ファイル名またはモデルフォルダー名から出すヒントです。'
         '種類、GPU上の常駐、実行のいずれも確認するものではありません。インストール済みの候補は未確認のままで、'
         'エンジンの稼働はプロセスごとに実測しており、モデルごとではありません。'
@@ -281,7 +281,7 @@ _HELP = {
         '**Why does nvidia-smi say N/A?** GeForce cards on Windows run in *WDDM* mode: Windows, not the\n'
         "NVIDIA driver, owns video memory, so NVML can't attribute it to processes. The Windows counters can."
     ): (
-        '**nvidia-smiがN/Aと表示するのはなぜですか?** Windows上のGeForceは*WDDM*モードで動作します。'
+        '**nvidia-smiがN/Aと表示するのはなぜですか？** Windows上のGeForceは*WDDM*モードで動作します。'
         'ビデオメモリを管理するのはNVIDIAドライバーではなくWindowsなので、NVMLはメモリをプロセスに帰属させられません。'
         'Windowsのカウンターなら帰属させられます。'
     ),
@@ -290,7 +290,7 @@ _HELP = {
         "process can *see*, so dwm can show nearly the whole card. VRAM here is what's charged to each\n"
         'process ("Local Usage" when available). The adapter counter is the total, not the sum of rows.'
     ): (
-        '**他のツールでdwm.exeが巨大に見えるのはなぜですか?** Windowsのプロセスごとの「Dedicated Usage」は、'
+        '**他のツールでdwm.exeが巨大に見えるのはなぜですか？** Windowsのプロセスごとの「Dedicated Usage」は、'
         'そのプロセスから*見える*すべてのサーフェスを数えるため、dwmがカード全体に近い量を使っているように見えることがあります。'
         'ここでのVRAMは、各プロセスに計上された分です（利用できる場合は「Local Usage」）。'
         '合計の基準はアダプターのカウンターであり、各行の合計ではありません。'
@@ -328,7 +328,7 @@ _HELP = {
         'NVMLのGPU使用率と同等とは限りません。Vulkanでは、他のプロセスのHIP内部は見えません。'
     ),
     'Keys: `↑/↓` select · `s` sort · `c` chart · `a` show all · `p` pause · `?` this help · `q` quit':
-        'キー: `↑/↓` 選択 ・ `s` 並べ替え ・ `c` グラフ ・ `a` 全部/上位 ・ `p` 一時停止 ・ `?` このヘルプ ・ `q` 終了',
+        'キー: `↑/↓` 選択 ・ `s` 並べ替え ・ `c` グラフ ・ `a` すべて/上位 ・ `p` 一時停止 ・ `?` このヘルプ ・ `q` 終了',
     (
         'All eight trend charts are visible by default. They stack in narrow terminals and\n'
         'share rows when there is room. Click the **Charts** dropdown to show all charts or\n'
@@ -409,7 +409,7 @@ _REPORT = {
     "unavailable (counter stream ended)": "利用不可（カウンターのストリームが終了しました）",
     "GPU memory {used} allocated / {total} unified": "GPUメモリ {used} 割り当て済み / ユニファイド {total}",
     "shared (in system RAM) {size}": "共有RAM {size}",
-    "mem-bandwidth": "メモリ稼働",
+    "mem-bandwidth": "メモリ稼働率",
     "PROCESS": "プロセス",
     "KIND": "種類",
     "RUNTIME": "ランタイム",
@@ -444,7 +444,7 @@ _DIFF = {
     "unknown GPU": "不明なGPU",
     "Measured counters are compared directly. Runtime-reported and estimated values are listed\n"
     "separately and are not added to measured totals.":
-        "実測カウンターは直接比較します。ランタイム報告値と推定値は別に一覧し、\n実測の合計には加算しません。",
+        "実測カウンターは直接比較します。ランタイム報告値と推定値は分けて表示し、\n実測の合計には加算しません。",
     "DEVICE (measured)": "デバイス（実測）",
     "BEFORE": "変更前",
     "AFTER": "変更後",
@@ -548,7 +548,7 @@ _PROCINFO = {
     "in use (mapped)": "使用中（マップ済み）",
     "launch arg": "起動引数",
     "reported (api)": "ランタイム報告 (api)",
-    "decision model": "意思決定モデル",
+    "decision model": "判断モデル",
     "embedding model": "埋め込みモデル",
     "reranker": "リランカー",
     "speech model": "音声モデル",
