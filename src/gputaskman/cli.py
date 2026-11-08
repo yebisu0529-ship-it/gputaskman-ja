@@ -7,7 +7,7 @@ import math
 import sys
 import time
 
-from .i18n import current_language, set_language
+from .i18n import _, current_language, set_language
 
 LANG_HELP = ("display language (default auto: GPUTASKMAN_LANG, then the locale, then the Windows display language); "
              "--json always prints English")
@@ -59,12 +59,12 @@ def _run() -> None:
     args = ap.parse_args()
     set_language("en" if args.json else args.lang)
     if args.gpu is not None and args.gpu < 0:
-        ap.error("--gpu must be a non-negative index")
+        ap.error(_("--gpu must be a non-negative index"))
     if not math.isfinite(args.interval) or args.interval <= 0:
-        ap.error("--interval must be a finite number greater than zero")
+        ap.error(_("--interval must be a finite number greater than zero"))
 
     if sys.platform not in ("win32", "darwin") and not sys.platform.startswith("linux"):
-        sys.exit("gputaskman supports Windows (WDDM), Linux/WSL (NVML, or amdgpu DRM) and macOS (Apple Silicon) only.")
+        sys.exit(_("gputaskman supports Windows (WDDM), Linux/WSL (NVML, or amdgpu DRM) and macOS (Apple Silicon) only."))
 
     if args.list_gpus:
         from .collector import enumerate_adapters, ordered_adapters

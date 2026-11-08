@@ -345,4 +345,136 @@ _HELP = {
     ),
 }
 
-MESSAGES: dict[str, str] = {**_UI, **_INSPECTOR, **_KINDS, **_EXPLAIN, **_HELP}
+_REPORT = {
+    "WSL + Windows host counters: 'WSL VM' is the exact total of Linux GPU memory (all distros). "
+    "Linux rows get their size by matching the VM's GPU contexts (* matched, ? guess). "
+    "W: rows are Windows processes.":
+        "WSL + Windowsホストのカウンター: 「WSL VM」はLinuxのGPUメモリ（全ディストリビューション）の正確な合計です。"
+        "Linuxの行のサイズは、VMのGPUコンテキストとの対応付けで求めます（* は対応付け済み、? は推測）。"
+        "W: の行はWindowsのプロセスです。",
+    "WSL: VRAM and engine load are device-wide. The Windows host charges every Linux process's "
+    "VRAM to the VM, so rows below are processes using the GPU, not their share of it.":
+        "WSL: VRAMとエンジン負荷はデバイス全体の値です。WindowsホストはLinuxプロセスのVRAMをすべてVMに計上するため、"
+        "以下の行はGPUを使っているプロセスを示すだけで、各プロセスの取り分ではありません。",
+    "{note} Windows host counters: {status}.": "{note}Windowsホストのカウンター: {status}。",
+    "* matched: the size is exact (Windows' counter for a WSL VM GPU context, or NVML for a host PID "
+    "seen from a container); which local process owns it is inferred, and only one explanation fits "
+    "(or every one that fits gives the same size).":
+        "* 対応付け済み: サイズは正確です（WSL VMのGPUコンテキストに対するWindowsのカウンター、"
+        "またはコンテナーから見えるホストPIDに対するNVML）。どのローカルプロセスが所有しているかは推測ですが、"
+        "成り立つ説明が1つだけ（または成り立つ説明がどれも同じサイズ）の場合です。",
+    "? order guess: the size is exact but several owners fit, so newer processes are paired with newer "
+    "GPU contexts / PIDs and outside ones are assumed oldest. Cached foreign-size hints only rank extra "
+    "candidates; they never prove ownership. Becomes * with evidence, such as a process starting while "
+    "gputaskman runs.":
+        "? 順序による推測: サイズは正確ですが、当てはまる所有者が複数あるため、新しいプロセスを新しいGPUコンテキスト/PIDに"
+        "対応付け、外部のプロセスは最も古いと仮定しています。キャッシュされた外部サイズのヒントは、"
+        "追加の候補の順位付けに使うだけで、所有を証明することはありません。"
+        "gputaskmanの実行中にプロセスが起動するなどの根拠が得られると、* になります。",
+    "VRAM n/a: this kernel's amdgpu fdinfo has incomplete or unparseable drm-shared-* stats, so resident "
+    "memory may include buffers imported from other processes and would be counted once per importer.":
+        "VRAMはn/a: このカーネルのamdgpu fdinfoには、不完全または解析できないdrm-shared-*の統計があります。"
+        "そのため常駐メモリには他のプロセスからインポートされたバッファーが含まれている可能性があり、"
+        "インポートしたプロセスごとに1回ずつ数えられてしまいます。",
+    "VRAM and GPU% n/a: this process holds a DRM client other processes hold too (fd passing, "
+    "fork). fdinfo counts the client once and doesn't say which of them uses it.":
+        "VRAMとGPU%はn/a: このプロセスが保持しているDRMクライアントは、他のプロセスも保持しています（fdの受け渡し、fork）。"
+        "fdinfoはクライアントを1つとして数え、どのプロセスが使っているかは示しません。",
+    "VRAM n/a: this process's DRM client shares buffers with other clients (dma-buf, e.g. "
+    "windows and video frames). fdinfo counts shared buffers by where they prefer to live, not "
+    "where they are, so its private part can't be measured.":
+        "VRAMはn/a: このプロセスのDRMクライアントは、他のクライアントとバッファーを共有しています（dma-buf。例: ウィンドウやビデオフレーム）。"
+        "fdinfoはプロセス間共有バッファーを、実際の配置場所ではなく配置の優先先で数えるため、"
+        "このプロセス固有の分は測定できません。",
+    "VRAM n/a: this process opened the GPU through /dev/dri/card*, which root-owned services such as "
+    "logind may also hold where a normal user can't see them; run as root to check.":
+        "VRAMはn/a: このプロセスは/dev/dri/card*経由でGPUを開いています。通常のユーザーからは見えない場所で、"
+        "logindなどrootが所有するサービスも同じものを保持している可能性があります。確認するにはrootで実行してください。",
+    "VRAM and GPU% n/a: some of this process's file descriptors or fdinfo couldn't be read.":
+        "VRAMとGPU%はn/a: このプロセスのファイルディスクリプターまたはfdinfoの一部を読み取れませんでした。",
+    "VRAM and GPU% n/a this refresh: the scan budget ran out before every process's fds were "
+    "listed, so another holder of this DRM client can't be ruled out.":
+        "今回の更新ではVRAMとGPU%はn/a: すべてのプロセスのfdを列挙する前にスキャン予算が尽きたため、"
+        "このDRMクライアントの別の保持者を除外できません。",
+    "starting": "開始中",
+    "ok": "正常",
+    "off": "オフ",
+    "off (--no-host)": "オフ (--no-host)",
+    "off (WSL interop is disabled)": "オフ（WSLの相互運用が無効です）",
+    "off (multi-GPU WSL host matching is not validated; use --gpu N)":
+        "オフ（複数GPUでのWSLホスト照合は未検証です。--gpu Nを指定してください）",
+    "unmatched (no Windows adapter matches this GPU's usage)":
+        "未照合（このGPUの使用量に一致するWindowsアダプターがありません）",
+    "unavailable (powershell.exe not found)": "利用不可（powershell.exeが見つかりません）",
+    "unavailable (counter stream ended)": "利用不可（カウンターのストリームが終了しました）",
+    "GPU memory {used} allocated / {total} unified": "GPUメモリ {used} 割り当て済み / ユニファイド {total}",
+    "shared (in system RAM) {size}": "共有RAM {size}",
+    "mem-bandwidth": "メモリ稼働",
+    "PROCESS": "プロセス",
+    "KIND": "種類",
+    "RUNTIME": "ランタイム",
+    "SPILL": "共有RAM",
+    "PAGED": "非常駐",
+    "INSIDE": "中身",
+    "Linux VRAM split: {reason}": "LinuxのVRAM配分: {reason}",
+    "== {name} ({pid}) Handy selected (settings, not load proof): {model}":
+        "== {name} ({pid}) Handyで選択中（設定ファイルの値。ロードの証拠ではありません）: {model}",
+    "last Handy event: {event} {model} at {time} (runtime-reported history, not current GPU residency)":
+        "Handyの最新イベント: {event} {model}、{time}（ランタイム報告の履歴であり、現在のGPU常駐を示すものではありません）",
+    "{kind}: {label}  [{arch}, {params} params, {quant}, {layers} layers, ctx_train {ctx_train}]  {file}  "
+    "evidence: {evidence}":
+        "{kind}: {label}  [{arch}、{params}パラメーター、{quant}、{layers}レイヤー、ctx_train {ctx_train}]  {file}  "
+        "根拠: {evidence}",
+    "file: {name}  ({size}{kind})  evidence: {evidence}": "ファイル: {name}（{size}{kind}）  根拠: {evidence}",
+    "server:": "サーバー:",
+    "exact sizes from log: {path}": "ログ由来の正確なサイズ: {path}",
+}
+_CLI = {
+    "--gpu must be a non-negative index": "--gpuには0以上のインデックスを指定してください",
+    "--interval must be a finite number greater than zero": "--intervalには0より大きい有限の数値を指定してください",
+    "gputaskman supports Windows (WDDM), Linux/WSL (NVML, or amdgpu DRM) and macOS (Apple Silicon) only.":
+        "gputaskmanが対応しているのは、Windows (WDDM)、Linux/WSL（NVML、またはamdgpuのDRM）、macOS (Apple Silicon)のみです。",
+}
+_DIFF = {
+    "{path} is not a gputaskman --json snapshot": "{path}はgputaskmanの--jsonスナップショットではありません",
+    "snapshots are from different GPUs or backends: {before_gpu} ({before_backend}) "
+    "vs {after_gpu} ({after_backend})":
+        "スナップショットが別々のGPUまたはバックエンドのものです: {before_gpu} ({before_backend}) と {after_gpu} ({after_backend})",
+    ", {seconds} s apart": "、{seconds}秒間隔",
+    "unknown GPU": "不明なGPU",
+    "Measured counters are compared directly. Runtime-reported and estimated values are listed\n"
+    "separately and are not added to measured totals.":
+        "実測カウンターは直接比較します。ランタイム報告値と推定値は別に一覧し、\n実測の合計には加算しません。",
+    "DEVICE (measured)": "デバイス（実測）",
+    "BEFORE": "変更前",
+    "AFTER": "変更後",
+    "CHANGE": "増減",
+    "dedicated used": "専用GPUメモリ使用量",
+    "shared used": "共有RAM使用量",
+    "attributed to processes": "プロセスへの帰属分",
+    "unattributed": "未帰属",
+    "PROCESSES (dedicated)": "プロセス（専用）",
+    "MATCH": "照合",
+    "SHARED +/-": "共有増減",
+    "not listed": "一覧になし",
+    "(no process changed by 16 MB or more)": "（16 MB以上変化したプロセスはありません）",
+    "{count} process(es) changed by less than 16 MB are not shown; --json lists all.":
+        "16 MB未満しか変化していない{count}個のプロセスは表示していません。--jsonではすべて出力します。",
+    "inferred VRAM (WSL context match)": "推測VRAM（WSLコンテキストの照合）",
+    "context length": "コンテキスト長",
+    "weights": "重み",
+    "kv": "KVキャッシュ",
+    "unknown": "不明",
+    "runtime-reported": "ランタイム報告",
+    "estimated": "推定",
+    "model file added: {path} [{sources}]": "モデルファイルを新たに検出: {path} [{sources}]",
+    "model file removed: {path} [{sources}]": "モデルファイルを検出しなくなった: {path} [{sources}]",
+    "Model files show what a process opened or named, not what is resident in GPU memory.":
+        "モデルファイルが示すのは、プロセスが開いた、または指定したファイルであり、GPUメモリに常駐しているものではありません。",
+    "'not listed' means the process was absent from that snapshot: not running, or using too "
+    "little GPU to be listed.":
+        "「一覧になし」は、そのスナップショットにプロセスが含まれていなかったことを示します。"
+        "実行していなかったか、GPU使用量が小さすぎて一覧に載らなかったかのどちらかです。",
+}
+
+MESSAGES: dict[str, str] = {**_UI, **_INSPECTOR, **_KINDS, **_EXPLAIN, **_HELP, **_REPORT, **_CLI, **_DIFF}

@@ -6,7 +6,10 @@ import dataclasses
 import json
 import os
 
+from rich.cells import cell_len
+
 from .collector import ProcRow, Snapshot
+from .i18n import _, fit
 from .llm import gb
 from .nvml import format_metric
 from .pdh import ProcGpu
@@ -19,9 +22,10 @@ WSL_HOST_NOTE = ("WSL + Windows host counters: 'WSL VM' is the exact total of Li
 
 def wsl_note(s: Snapshot) -> str:
     if s.host_data:
-        return WSL_HOST_NOTE
-    status = f" Windows host counters: {s.host_status}." if s.host_status else ""
-    return WSL_NOTE + status
+        return _(WSL_HOST_NOTE)
+    if not s.host_status:
+        return _(WSL_NOTE)
+    return _("{note} Windows host counters: {status}.").format(note=_(WSL_NOTE), status=_(s.host_status))
 
 
 WSL_EMPTY = ("No Linux process in this distro has the GPU open (other WSL distros and Docker Desktop "
@@ -77,11 +81,11 @@ DRM_RESIDENT_NOTE = ("Resident: every buffer the process can reach, shared ones 
 
 
 def drm_note(g: ProcGpu) -> str:
-    return DRM_NOTES.get(g.drm_reason, "")
+    return _(DRM_NOTES.get(g.drm_reason, ""))
 
 
 def inferred_note(g) -> str:
-    return ORDER_NOTE if g.inferred_by == "order" else INFERRED_NOTE
+    return _(ORDER_NOTE if g.inferred_by == "order" else INFERRED_NOTE)
 
 
 METAL_NOTE = ("macOS: unified memory, so GPU memory is part of system RAM. Rows show each process's graphics "
@@ -152,12 +156,12 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
     if s.backend == "metal":
         used = gb(s.vram_used) if s.vram_used is not None else "N/A"
         out.append(f"{name}  {s.driver}  Metal")
-        out.append(f"GPU memory {used} allocated / {gb(s.vram_total)} unified")
-        out.append(METAL_NOTE)
+        out.append(_("GPU memory {used} allocated / {total} unified").format(used=used, total=gb(s.vram_total)))
+        out.append(_(METAL_NOTE))
         if nv:
             out.append(f"GPU {format_metric(nv.util_gpu, unit='%')}")
     else:
-        info = f"  driver {s.driver}" if s.driver else ""
+        info = ("  " + _("driver {version}").format(version=s.driver)) if s.driver else ""
         if s.cuda:
             info += f"  CUDA {s.cuda}"
         out.append(f"{name}{info}  {nv.driver_model if nv else ''}")
@@ -165,7 +169,7 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
         shared = gb(s.shared_used) if s.shared_used is not None else "N/A"
         memory = f"VRAM {used} / {gb(s.vram_total)}"
         if s.backend in ("wddm", "drm") or s.host_data:
-            memory += f"   shared (in system RAM) {shared}"
+            memory += "   " + _("shared (in system RAM) {size}").format(size=shared)
         out.append(memory)
     if s.backend == "wsl":
         out.append(wsl_note(s))
@@ -179,7 +183,7 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
         clock = (f"gfx {format_metric(nv.gfx_clock)}" if nv.source.startswith("AMD ") else
                  f"SM {format_metric(nv.sm_clock)}")
         power_kind = f" ({nv.power_kind})" if nv.power_kind else ""
-        out.append(f"{label} {format_metric(nv.util_gpu, unit='%')}  mem-bandwidth {format_metric(nv.util_mem, unit='%')}  "
+        out.append(f"{label} {format_metric(nv.util_gpu, unit='%')}  {_('mem-bandwidth')} {format_metric(nv.util_mem, unit='%')}  "
                    f"{format_metric(nv.temp, unit='C')}  {format_metric(nv.power_w, '.0f')}/"
                    f"{format_metric(nv.power_limit_w, '.0f')} W{power_kind}  {pstate}  "
                    f"{clock} MHz  "
@@ -189,7 +193,9 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
     out.append("")
     shown = s.procs[:limit]
     w = max([7] + [len(p.pid_label) for p in shown])  # host PIDs like W:120880 are wider
-    out.append(f"{'PID':>{w}}  {'PROCESS':<24} {'KIND':<10} {'RUNTIME':<24} {'VRAM':>9} {'SPILL':>8} {'PAGED':>8} {'GPU%':>5}  INSIDE")
+    kind_w = max([10] + [cell_len(_(p.kind)) for p in shown])
+    out.append(f"{fit('PID', w, '>')}  {fit(_('PROCESS'), 24)} {fit(_('KIND'), kind_w)} {fit(_('RUNTIME'), 24)} "
+               f"{fit('VRAM', 9, '>')} {fit(_('SPILL'), 8, '>')} {fit(_('PAGED'), 8, '>')} {fit('GPU%', 5, '>')}  {_('INSIDE')}")
     for p in shown:
         wddm = has_wddm_counters(s, p)
         spill = gb(p.gpu.shared) if has_spill_counters(s, p) and p.gpu.shared >= 1 << 20 else ""
@@ -200,31 +206,34 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
             paged = "N/A"
         pid = p.pid_label
         pct = f"{p.gpu.gpu_pct:.0f}" if has_engine_counters(s, p) else "n/a"
-        out.append(f"{pid:>{w}}  {p.name[:24]:<24} {p.kind:<10} {p.runtime[:24]:<24} {vram_label(p.gpu):>9} {spill:>8} "
+        out.append(f"{pid:>{w}}  {fit(p.name, 24)} {fit(_(p.kind), kind_w)} {fit(p.runtime, 24)} {vram_label(p.gpu):>9} {spill:>8} "
                    f"{paged:>8} {pct:>5}  {p.inside}")
     if any(p.gpu.inferred_by == "consistent" for p in shown):
-        out.append(INFERRED_NOTE)
+        out.append(_(INFERRED_NOTE))
     if any(p.gpu.inferred_by == "order" for p in shown):
-        out.append(ORDER_NOTE)
+        out.append(_(ORDER_NOTE))
     if s.backend == "drm":
         for note in dict.fromkeys(drm_note(p.gpu) for p in shown if not p.host):
             if note:
                 out.append(note)
     if s.process_status:
-        out.append(f"DRM process scan: {s.process_status}.")
+        out.append(_("DRM process scan: {status}.").format(status=s.process_status))
     if s.backend == "wsl" and s.wsl_split and any(not p.host and not p.gpu.attributed and p.gpu.inferred is None
                                                   for p in s.procs):
-        out.append(f"Linux VRAM split: {s.wsl_split}")
+        out.append(_("Linux VRAM split: {reason}").format(reason=s.wsl_split))
     if s.backend == "wsl" and not any(not p.host for p in s.procs):
-        out.append(f"{'':>{w}}  {WSL_EMPTY}")
+        out.append(f"{'':>{w}}  {_(WSL_EMPTY)}")
     for p in s.procs:
         if p.handy:
             out.append("")
             if p.handy.selected_model:
-                out.append(f"== {p.name} ({p.pid}) Handy selected (settings, not load proof): {p.handy.selected_model}")
+                out.append(_("== {name} ({pid}) Handy selected (settings, not load proof): {model}").format(
+                    name=p.name, pid=p.pid, model=p.handy.selected_model))
             if p.handy.last_event:
-                out.append(f"   last Handy event: {p.handy.last_event} {p.handy.last_model or ''} "
-                           f"at {p.handy.last_event_local} (runtime-reported history, not current GPU residency)")
+                out.append("   " + _("last Handy event: {event} {model} at {time} "
+                                    "(runtime-reported history, not current GPU residency)").format(
+                                        event=p.handy.last_event, model=p.handy.last_model or "",
+                                        time=p.handy.last_event_local))
         if not p.llm:
             continue
         out.append("")
@@ -232,19 +241,22 @@ def to_text(s: Snapshot, limit: int = 30) -> str:
         for i, g in enumerate(p.llm.models):
             kind = p.llm.kind_label(i)
             ev = p.llm.files[i].evidence if i < len(p.llm.files) else ""
-            out.append(f"   {kind}: {p.llm.label(i)}  [{g.arch}, {g.params_label} params, {g.quant}, {g.n_layers} layers, "
-                       f"ctx_train {g.ctx_train}]  {os.path.basename(g.path)}  evidence: {ev}")
+            out.append("   " + _("{kind}: {label}  [{arch}, {params} params, {quant}, {layers} layers, "
+                                    "ctx_train {ctx_train}]  {file}  evidence: {evidence}").format(
+                                        kind=kind, label=p.llm.label(i), arch=g.arch, params=g.params_label, quant=g.quant,
+                                        layers=g.n_layers, ctx_train=g.ctx_train, file=os.path.basename(g.path), evidence=ev))
         for f in p.llm.other_files:
-            kind = f", {f.kind_label}" if f.kind_label else ""
-            out.append(f"   file: {f.store_name or f.path}  ({gb(f.size)}{kind})  evidence: {f.evidence}")
+            kind = _(", {kind}").format(kind=f.kind_label) if f.kind_label else ""
+            out.append("   " + _("file: {name}  ({size}{kind})  evidence: {evidence}").format(
+                name=f.store_name or f.path, size=gb(f.size), kind=kind, evidence=f.evidence))
         for seg in p.llm.segments:
             out.append(f"   {gb(seg.bytes):>9}  {seg.label}{'' if seg.exact else ''}")
         if p.llm.server:
             sv = p.llm.server
-            out.append(f"   server: {sv.kind} {sv.url} ctx={sv.n_ctx} slots={sv.slots_busy}/{sv.slots_total}"
+            out.append("   " + _("server:") + f" {sv.kind} {sv.url} ctx={sv.n_ctx} slots={sv.slots_busy}/{sv.slots_total}"
                        + (f" gen={sv.gen_tok_s:.1f} tok/s" if sv.gen_tok_s is not None else ""))
         if p.llm.log_source:
-            out.append(f"   exact sizes from log: {p.llm.log_source}")
+            out.append("   " + _("exact sizes from log: {path}").format(path=p.llm.log_source))
         for n in p.llm.notes:
             out.append(f"   - {n}")
     return "\n".join(out)

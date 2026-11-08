@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 
+from rich.cells import cell_len
+
+from .i18n import _, fit
 from .llm import gb
 
 MiB = 1 << 20
@@ -27,7 +30,7 @@ def load(path: str) -> dict:
     text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
     data = json.loads(text)
     if not isinstance(data, dict) or not isinstance(data.get("processes"), list):
-        raise ValueError(f"{path} is not a gputaskman --json snapshot")
+        raise ValueError(_("{path} is not a gputaskman --json snapshot").format(path=path))
     return data
 
 
@@ -146,9 +149,11 @@ def _size(p: dict) -> int:
 
 def diff(before: dict, after: dict) -> dict:
     if before.get("gpu") != after.get("gpu") or before.get("backend") != after.get("backend"):
-        raise ValueError(f"snapshots are from different GPUs or backends: "
-                         f"{before.get('gpu')} ({before.get('backend')}) vs {after.get('gpu')} ({after.get('backend')})")
-    device = {k: change(before.get(k), after.get(k)) for k, _ in DEVICE if k != "unattributed"}
+        raise ValueError(_("snapshots are from different GPUs or backends: {before_gpu} ({before_backend}) "
+                           "vs {after_gpu} ({after_backend})").format(
+                               before_gpu=before.get("gpu"), before_backend=before.get("backend"),
+                               after_gpu=after.get("gpu"), after_backend=after.get("backend")))
+    device = {k: change(before.get(k), after.get(k)) for k, _label in DEVICE if k != "unattributed"}
     device["unattributed"] = change(_unattributed(before), _unattributed(after))
     procs = [_proc(b, a, how) for b, a, how in match(before["processes"], after["processes"])]
     procs.sort(key=_size, reverse=True)
@@ -201,54 +206,57 @@ def _pid(p: dict) -> str:
 
 
 def to_text(d: dict) -> str:
-    when = f", {d['seconds']} s apart" if d["seconds"] is not None else ""
-    out = [f"gputaskman diff: {d['gpu'] or 'unknown GPU'} ({d['backend']}){when}",
-           "Measured counters are compared directly. Runtime-reported and estimated values are listed",
-           "separately and are not added to measured totals.", "",
-           f"{'DEVICE (measured)':<26}{'BEFORE':>11}{'AFTER':>11}{'CHANGE':>11}"]
+    when = _(", {seconds} s apart").format(seconds=d["seconds"]) if d["seconds"] is not None else ""
+    out = [f"gputaskman diff: {d['gpu'] or _('unknown GPU')} ({d['backend']}){when}",
+           _("Measured counters are compared directly. Runtime-reported and estimated values are listed\n"
+             "separately and are not added to measured totals."), "",
+           fit(_("DEVICE (measured)"), 26) + fit(_("BEFORE"), 11, ">") + fit(_("AFTER"), 11, ">") + fit(_("CHANGE"), 11, ">")]
     for key, label in DEVICE:
         c = d["device"][key]
-        out.append(f"{label:<26}{_gb(c['before']):>11}{_gb(c['after']):>11}{_signed(c['delta']):>11}")
+        out.append(fit(_(label), 26) + f"{_gb(c['before']):>11}{_gb(c['after']):>11}{_signed(c['delta']):>11}")
 
     procs = [p for p in d["processes"] if _changed(p)]
-    out += ["", f"{'PROCESSES (dedicated)':<22}{'PID':>14}  {'MATCH':<11}{'BEFORE':>11}{'AFTER':>11}"
-                f"{'CHANGE':>11}{'SHARED +/-':>11}"]
+    out += ["", fit(_("PROCESSES (dedicated)"), 22) + fit("PID", 14, ">") + "  " + fit(_("MATCH"), 11)
+            + fit(_("BEFORE"), 11, ">") + fit(_("AFTER"), 11, ">") + fit(_("CHANGE"), 11, ">")
+            + fit(_("SHARED +/-"), 11, ">")]
     for p in procs:
         v, s = p["measured"]["vram_bytes"], p["measured"]["shared_bytes"]
-        before = "not listed" if p["match"] == "new" else _gb(v["before"])
-        after = "not listed" if p["match"] == "gone" else _gb(v["after"])
-        out.append(f"{(p['name'] or '?')[:21]:<22}{_pid(p):>14}  {p['match']:<11}{before:>11}{after:>11}"
-                   f"{_signed(v['delta']):>11}{_signed(s['delta']):>11}")
+        before = _("not listed") if p["match"] == "new" else _gb(v["before"])
+        after = _("not listed") if p["match"] == "gone" else _gb(v["after"])
+        out.append(fit(p["name"] or "?", 21) + f" {_pid(p):>14}  {p['match']:<11}" + fit(before, 11, ">")
+                   + fit(after, 11, ">") + f"{_signed(v['delta']):>11}{_signed(s['delta']):>11}")
     if not procs:
-        out.append("(no process changed by 16 MB or more)")
+        out.append(_("(no process changed by 16 MB or more)"))
     if len(procs) < len(d["processes"]):
-        out.append(f"{len(d['processes']) - len(procs)} process(es) changed by less than 16 MB are not shown; "
-                   "--json lists all.")
+        out.append(_("{count} process(es) changed by less than 16 MB are not shown; --json lists all.").format(
+            count=len(d["processes"]) - len(procs)))
 
     for p in procs:
         detail = []
         inf = p["inferred"]["vram_inferred_bytes"]
         if _moved(inf):
-            detail.append(f"  inferred VRAM (WSL context match)  {_gb(inf['before'])} -> {_gb(inf['after'])}"
+            detail.append("  " + _("inferred VRAM (WSL context match)") + f"  {_gb(inf['before'])} -> {_gb(inf['after'])}"
                           f"  {_signed(inf['delta'])}")
         r = p["runtime"]
         if r:
             n = r["n_ctx"]
             if n["before"] != n["after"]:
-                detail.append(f"  context length  {n['before'] if n['before'] is not None else 'N/A'} -> "
+                detail.append("  " + _("context length") + f"  {n['before'] if n['before'] is not None else 'N/A'} -> "
                               f"{n['after'] if n['after'] is not None else 'N/A'}")
+            kind_w = max([8] + [cell_len(_(kind)) for kind in r["segments"]])
             for kind, s in r["segments"].items():
                 if _moved(s):
-                    detail.append(f"  {kind:<8} {_gb(s['before']):>9} -> {_gb(s['after']):>9}"
-                                  f"  {_signed(s['delta']):>9}  {s['source']}")
-        for verb, key in (("added", "added"), ("removed", "removed")):
+                    detail.append(f"  {fit(_(kind), kind_w)} {_gb(s['before']):>9} -> {_gb(s['after']):>9}"
+                                  f"  {_signed(s['delta']):>9}  {_(s['source'])}")
+        for template, key in ((_("model file added: {path} [{sources}]"), "added"),
+                              (_("model file removed: {path} [{sources}]"), "removed")):
             for f in p["model_files"][key]:
-                detail.append(f"  model file {verb}: {f['path']} [{', '.join(f['sources'] or [])}]")
+                detail.append("  " + template.format(path=f["path"], sources=", ".join(f["sources"] or [])))
         if detail:
             out += ["", f"{p['name']} ({_pid(p)})"] + detail
     if any(p["model_files"]["added"] or p["model_files"]["removed"] for p in procs):
-        out += ["", "Model files show what a process opened or named, not what is resident in GPU memory."]
+        out += ["", _("Model files show what a process opened or named, not what is resident in GPU memory.")]
     if any(p["match"] in ("new", "gone") for p in procs):
-        out.append("'not listed' means the process was absent from that snapshot: not running, or using too "
-                   "little GPU to be listed.")
+        out.append(_("'not listed' means the process was absent from that snapshot: not running, or using too "
+                     "little GPU to be listed."))
     return "\n".join(out)

@@ -6,6 +6,7 @@ import io
 import json
 import os
 import string
+import tempfile
 import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
@@ -21,15 +22,25 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Markdown, Static
 
 import gputaskman
+from gputaskman import diff as diff_module
 from gputaskman import locale_ja, report
 from gputaskman.app import COLUMNS, EXPLAIN, HELP_MD, KIND_STYLE, MODEL_COLUMNS, GpuTaskManager, HelpScreen, help_markdown
 from gputaskman.cli import main
+from gputaskman.collector import ProcRow
 from gputaskman.i18n import _, _windows_ui_language, current_language, detect_language, fit, set_language
 from gputaskman.nvml import NvDevice
+from gputaskman.pdh import ProcGpu
+from gputaskman.procinfo import ProcDetail
+from gputaskman.report import to_text
 from test_core import snapshot
+from test_diff import llm as llm_view
+from test_diff import proc as diff_proc
+from test_diff import snap as diff_snap
 
 # The suite asserts English output through cli.main(); keep it independent of the machine's display language.
 os.environ["GPUTASKMAN_LANG"] = "en"
+GiB = 1 << 30
+MiB = 1 << 20
 
 
 class DetectLanguageTests(unittest.TestCase):
@@ -171,9 +182,32 @@ def render_time_msgids():
     ids |= set(COLUMNS) | {column for column in MODEL_COLUMNS if column}
     for screen in (GpuTaskManager, HelpScreen):
         ids |= {binding.description for binding in Binding.make_bindings(screen.BINDINGS)}
-    ids |= {report.METAL_NOTE, report.WSL_EMPTY, report.DRM_RESIDENT_NOTE}
+    ids |= {report.METAL_NOTE, report.WSL_EMPTY, report.DRM_RESIDENT_NOTE, report.WSL_NOTE, report.WSL_HOST_NOTE,
+            report.INFERRED_NOTE, report.ORDER_NOTE} | set(report.DRM_NOTES.values())
+    ids |= {label for _key, label in diff_module.DEVICE} | set(diff_module.SEGMENT_ORDER)
+    ids |= {"runtime-reported", "estimated"}  # diff's per-segment source, translated where its text is built
+    ids |= static_host_statuses()
     ids.add("palette")  # Textual's own Footer label for ctrl+p, translated by the same active_bindings override
     return ids
+
+
+def static_host_statuses():
+    """Literals assigned to a .status or .host_status attribute; the f-string ones are dynamic and stay English."""
+    def literals(expression):
+        if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+            return [expression.value]
+        if isinstance(expression, ast.IfExp):
+            return literals(expression.body) + literals(expression.orelse)
+        return []
+
+    found = set()
+    for _path, tree in package_trees():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Attribute) and target.attr in ("status", "host_status")
+                    for target in node.targets):
+                found |= {value for value in literals(node.value) if value}
+    return found
 
 
 def placeholders(text):
@@ -381,6 +415,135 @@ class UiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("What can be known", text)
 
 
+class ReportTextTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(set_language, "en")
+
+    def fixture(self):
+        s = snapshot()
+        s.driver, s.cuda = "560.94", "12.6"
+        s.nv = NvDevice(index=0, util_gpu=50, util_mem=10, temp=49, power_w=72, power_limit_w=150, sm_clock=1500,
+                        video_clock=900, driver_model="WDDM")
+        s.procs.append(ProcRow(30, "ゲーム用のとても長い名前のアプリケーション.exe", "3D/game", ProcGpu(dedicated=512 * MiB),
+                               ProcDetail(30, "game")))
+        return s
+
+    def table(self, text):
+        lines = text.splitlines()
+        header = next(index for index, line in enumerate(lines) if "VRAM" in line and "GPU%" in line)
+        return lines[header], lines[header + 1:lines.index("", header)]
+
+    def test_english_header_is_byte_for_byte_the_original(self):
+        header, _rows = self.table(to_text(self.fixture()))
+        self.assertEqual(header, f"{'PID':>7}  {'PROCESS':<24} {'KIND':<10} {'RUNTIME':<24} {'VRAM':>9} {'SPILL':>8} "
+                                 f"{'PAGED':>8} {'GPU%':>5}  INSIDE")
+
+    def test_japanese_header_and_device_lines(self):
+        set_language("ja")
+        text = to_text(self.fixture())
+        header, rows = self.table(text)
+        self.assertEqual(header.split(), ["PID", "プロセス", "種類", "ランタイム", "VRAM", "共有RAM", "非常駐", "GPU%", "中身"])
+        self.assertIn("コンポジター", "\n".join(rows))
+        first, memory = text.splitlines()[:2]
+        self.assertEqual(first, "GPU  ドライバー 560.94  CUDA 12.6  WDDM")
+        self.assertEqual(memory, "VRAM 10.00 GB / 16.00 GB   共有RAM 1.00 GB")
+        self.assertIn("メモリ稼働 10%", text)
+        self.assertNotIn("mem-bandwidth", text)
+
+    def test_every_row_keeps_the_vram_column_at_the_headers_cell_offset(self):
+        for language in ("en", "ja"):
+            with self.subTest(language=language):
+                set_language(language)
+                header, rows = self.table(to_text(self.fixture()))
+                end = cell_len(header[:header.index("VRAM") + len("VRAM")])
+                self.assertEqual(len(rows), 3)
+                for row, vram in zip(rows, ("8.00 GB", "2.00 GB", "512 MB")):
+                    self.assertEqual(set_cell_size(row, end)[-9:], f"{vram:>9}", row)
+                self.assertIn("ゲーム用のとても長い名前", rows[2])
+                self.assertNotIn("ゲーム用のとても長い名前の", rows[2])
+
+    def test_provenance_notes_are_translated_with_their_markers(self):
+        set_language("ja")
+        marked = ProcGpu(attributed=False, inferred=GiB, inferred_by="consistent")
+        guessed = ProcGpu(attributed=False, inferred=GiB, inferred_by="order")
+        self.assertTrue(report.inferred_note(marked).startswith("* 対応付け済み: サイズは正確です"))
+        self.assertTrue(report.inferred_note(guessed).startswith("? 順序による推測: "))
+        for reason, note in report.DRM_NOTES.items():
+            translated = report.drm_note(ProcGpu(drm_reason=reason))
+            self.assertNotEqual(translated, note, reason)
+            self.assertIn("n/a", translated)
+        self.assertEqual(report.drm_note(ProcGpu()), "")
+
+    def test_wsl_note_translates_static_host_statuses_and_leaves_dynamic_ones_english(self):
+        s = snapshot()
+        s.backend = "wsl"
+        for status, japanese in (("off (--no-host)", "オフ (--no-host)"), ("starting", "開始中"),
+                                 ("unavailable (OSError: boom)", "unavailable (OSError: boom)")):
+            s.host_status = status
+            with self.subTest(status=status):
+                set_language("ja")
+                self.assertTrue(report.wsl_note(s).startswith("WSL: VRAMとエンジン負荷は"))
+                self.assertTrue(report.wsl_note(s).endswith(f"Windowsホストのカウンター: {japanese}。"))
+                set_language("en")
+                self.assertEqual(report.wsl_note(s), f"{report.WSL_NOTE} Windows host counters: {status}.")
+        set_language("ja")
+        s.host_status = "ok (last Windows sample 5s old)"
+        self.assertTrue(report.wsl_note(s).startswith("WSL + Windowsホストのカウンター"))
+        s.host_status = ""
+        self.assertTrue(report.wsl_note(s).endswith("各プロセスの取り分ではありません。"))
+
+
+class DiffTextTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(set_language, "en")
+        self.before = diff_snap([diff_proc(1, "dwm.exe", vram=2 * GiB),
+                                 diff_proc(2, "llama-server", vram=5 * GiB, ports=[8080], llm=llm_view(4096, GiB // 2))],
+                                used=8 * GiB, attributed=7 * GiB)
+        self.after = diff_snap([diff_proc(1, "dwm.exe", vram=2 * GiB),
+                                diff_proc(22, "llama-server", vram=9 * GiB, ports=[8080], llm=llm_view(32768, 4 * GiB),
+                                          files=[r"D:\models\q.gguf"]),
+                                diff_proc(3, "python.exe", vram=GiB)],
+                               used=13 * GiB, attributed=12 * GiB, taken=142.5)
+
+    def text(self, language):
+        set_language(language)
+        return diff_module.to_text(diff_module.diff(self.before, self.after))
+
+    def test_english_text_is_unchanged(self):
+        lines = self.text("en").splitlines()
+        self.assertIn(f"{'DEVICE (measured)':<26}{'BEFORE':>11}{'AFTER':>11}{'CHANGE':>11}", lines)
+        self.assertIn(f"{'PROCESSES (dedicated)':<22}{'PID':>14}  {'MATCH':<11}{'BEFORE':>11}{'AFTER':>11}{'CHANGE':>11}"
+                      f"{'SHARED +/-':>11}", lines)
+        self.assertIn(f"  {'kv':<8} {'512 MB':>9} -> {'4.00 GB':>9}  {'+3.50 GB':>9}  estimated", lines)
+
+    def test_japanese_text_names_provenance_in_japanese_only(self):
+        text = self.text("ja")
+        for expected in ("gputaskman diff: RTX (wddm)、42.5秒間隔", "デバイス（実測）", "変更前", "変更後", "増減", "専用GPUメモリ使用量",
+                         "未帰属", "プロセス（専用）", "照合", "共有増減", "一覧になし", "  コンテキスト長  4096 -> 32768",
+                         "  KVキャッシュ    512 MB ->   4.00 GB   +3.50 GB  推定", "  モデルファイルを新たに検出: ",
+                         "llama-server (2->22)", "「一覧になし」は、そのスナップショットに"):
+            self.assertIn(expected, text)
+        for english in ("DEVICE", "BEFORE", "AFTER", "CHANGE", "Measured counters", "not listed", "estimated",
+                        "runtime-reported", "model file", "context length", "process(es)"):
+            self.assertNotIn(english, text)
+
+    def test_runtime_reported_segments_say_so(self):
+        self.before["processes"][1]["llm"] = llm_view(4096, GiB // 2, exact=True)
+        self.after["processes"][1]["llm"] = llm_view(32768, 4 * GiB, exact=True)
+        self.assertIn("ランタイム報告", self.text("ja"))
+        self.assertIn("runtime-reported", self.text("en"))
+
+    def test_every_row_is_as_many_cells_wide_as_its_table_header(self):
+        for language, device_header, process_header in (("en", "DEVICE (measured)", "PROCESSES (dedicated)"),
+                                                        ("ja", "デバイス（実測）", "プロセス（専用）")):
+            with self.subTest(language=language):
+                lines = self.text(language).splitlines()
+                device = next(index for index, line in enumerate(lines) if line.startswith(device_header))
+                process = next(index for index, line in enumerate(lines) if line.startswith(process_header))
+                for table in (lines[device:device + 5], lines[process:process + 3]):
+                    self.assertEqual({cell_len(line) for line in table}, {cell_len(table[0])}, table)
+
+
 class CliLanguageTests(unittest.TestCase):
     def setUp(self):
         self.addCleanup(set_language, "en")
@@ -424,6 +587,47 @@ class CliLanguageTests(unittest.TestCase):
                 self.assertRaises(SystemExit) as error:
             main()
         self.assertEqual(error.exception.code, 2)
+
+    def test_text_output_follows_the_flag_then_the_environment(self):
+        japanese = {"GPUTASKMAN_LANG": "ja"}
+        self.assertIn("プロセス", self.run_cli("--once", env=japanese))
+        self.assertIn("プロセス", self.run_cli("--once", "--lang", "ja"))
+        english = self.run_cli("--once", "--lang", "en", env=japanese)
+        self.assertIn("PROCESS", english)
+        self.assertNotIn("プロセス", english)
+
+    def test_option_errors_are_reported_in_the_selected_language(self):
+        for args, expected in ((["--lang", "ja", "--gpu", "-1"], "--gpuには0以上のインデックスを指定してください"),
+                               (["--lang", "ja", "-i", "0"], "--intervalには0より大きい有限の数値を指定してください")):
+            with self.subTest(args=args):
+                err = io.StringIO()
+                with patch("sys.argv", ["gputaskman", *args]), contextlib.redirect_stderr(err), \
+                        self.assertRaises(SystemExit):
+                    main()
+                self.assertIn(expected, err.getvalue())
+
+    def test_diff_text_follows_the_language_and_diff_json_stays_english(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before, after = (os.path.join(directory, name) for name in ("before.json", "after.json"))
+            for path, data in ((before, diff_snap([], used=GiB, attributed=GiB)),
+                               (after, diff_snap([diff_proc(1, "x", vram=GiB)], used=2 * GiB, attributed=2 * GiB))):
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+            for args, env, expected in ((["--lang", "ja"], {}, "デバイス（実測）"),
+                                        ([], {"GPUTASKMAN_LANG": "ja"}, "デバイス（実測）"),
+                                        (["--lang", "en"], {"GPUTASKMAN_LANG": "ja"}, "DEVICE (measured)")):
+                with self.subTest(args=args, env=env):
+                    out = io.StringIO()
+                    with patch("sys.argv", ["gputaskman", "diff", before, after, *args]), \
+                            contextlib.redirect_stdout(out), patch.dict(os.environ, env):
+                        main()
+                    self.assertIn(expected, out.getvalue())
+            out = io.StringIO()
+            with patch("sys.argv", ["gputaskman", "diff", before, after, "--json", "--lang", "ja"]), \
+                    contextlib.redirect_stdout(out):
+                main()
+            self.assertEqual(json.loads(out.getvalue())["device"]["vram_used"]["delta"], GiB)
+            self.assertEqual(current_language(), "en")
 
 
 if __name__ == "__main__":
