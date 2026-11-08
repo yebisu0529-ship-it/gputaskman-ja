@@ -6,9 +6,11 @@
 
 ## 実行方法
 
-このフォルダーで実行します。Python 3.11以上と[uv](https://docs.astral.sh/uv/)が必要です。
+Python 3.11以上と[uv](https://docs.astral.sh/uv/)が必要です。リポジトリを取得して、そのフォルダーで実行します。
 
 ```powershell
+git clone https://github.com/yebisu0529-ship-it/gputaskman-ja.git
+cd gputaskman-ja
 uv sync --locked
 uv run --locked gputaskman                  # TUI
 uv run --locked gputaskman --once           # テキストで1回だけ出力

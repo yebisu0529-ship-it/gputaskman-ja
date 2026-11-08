@@ -1,5 +1,9 @@
 # gputaskman
 
+> **非公式の日本語版です。** [shanselman/gputaskman](https://github.com/shanselman/gputaskman) の画面表示を日本語にしたフォークで、元のプロジェクトとは関係ありません。使い方と制限は [README.ja.md](README.ja.md) にあります。以下は元のREADME（英語）です。
+>
+> Unofficial Japanese localization of [shanselman/gputaskman](https://github.com/shanselman/gputaskman), not affiliated with the original project.
+
 **An `htop` for what's inside your GPU, not just how full it is.**
 
 Windows + NVIDIA/AMD, with Linux and WSL support (NVIDIA everywhere, AMD on native Linux; see
